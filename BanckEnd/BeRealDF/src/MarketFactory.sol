@@ -1,90 +1,92 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "./Market.sol";
-import "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+import "./Protocol.sol";
 
 /**
  * @title MarketFactory
- * @dev Creates and manages lending markets (USDC-WETH, DAI-WBTC, etc)
+ * @notice Factory contract to deploy new lending protocol markets (Protocol instances)
  */
-contract MarketFactory is Ownable {
-    constructor() Ownable(msg.sender) {}
-    // Struct to hold metadata about each market
+contract MarketFactory {
+    /// @notice Struct to store market metadata
     struct MarketInfo {
-        address marketAddress;
+        address protocol;
         address stableToken;
         address collateralToken;
+        uint256 collateralRatio;
     }
 
-    // All markets created
+    /// @notice Array of all created markets
     MarketInfo[] public markets;
 
-    // Mapping to prevent duplicate pairs
-    mapping(bytes32 => address) public getMarket;
-
-    // Events
-    event MarketCreated(address indexed market, address indexed stableToken, address indexed collateralToken);
+    /// @notice Emitted when a new market (Protocol) is deployed
+    event MarketCreated(
+        address indexed protocol,
+        address indexed stableToken,
+        address indexed collateralToken,
+        uint256 collateralRatio
+    );
 
     /**
-     * @dev Creates a new lending market with defined tokens and params
-     * @param _stableToken Address of the stablecoin (e.g. USDC)
-     * @param _collateralToken Address of the collateral token (e.g. WETH)
-     * @param _collateralRatio Collateral ratio in BPS (e.g. 8000 = 80%)
-     * @param _interestModelAddress Optional interest model address (can be 0x0 for now)
+     * @notice Deploys a new lending market (Protocol)
+     * @dev Deploys a new Protocol contract using the given tokens and ratio
+     * @param _stableToken Address of the stable token (e.g., USDC)
+     * @param _collateralToken Address of the collateral token (e.g., WETH)
+     * @param _collateralRatio Collateral ratio in basis points (e.g., 8000 = 80%)
+     * @return Address of the deployed Protocol contract
      */
     function createMarket(
         address _stableToken,
         address _collateralToken,
-        uint256 _collateralRatio,
-        address _interestModelAddress
-    ) external onlyOwner returns (address) {
-        require(_stableToken != address(0) && _collateralToken != address(0), "Invalid token address");
-        require(_stableToken != _collateralToken, "Tokens must differ");
-        require(_collateralRatio >= 5000 && _collateralRatio <= 9500, "Invalid collateral ratio"); // Between 50% and 95%
+        uint256 _collateralRatio
+    ) external returns (address) {
+        require(_stableToken != address(0), "Stable token is zero");
+        require(_collateralToken != address(0), "Collateral token is zero");
+        require(_stableToken != _collateralToken, "Tokens must be different");
 
-        bytes32 marketId = keccak256(abi.encodePacked(_stableToken, _collateralToken));
-        require(getMarket[marketId] == address(0), "Market already exists");
-
-        // Deploy new Market
-        Market newMarket = new Market(
+        // Deploy new Protocol contract
+        Protocol newProtocol = new Protocol(
             _stableToken,
             _collateralToken,
             _collateralRatio,
-            address(this)
+            msg.sender // Pass the caller as owner
         );
 
-        address marketAddr = address(newMarket);
-        getMarket[marketId] = marketAddr;
-
+        // Store market metadata
         markets.push(MarketInfo({
-            marketAddress: marketAddr,
+            protocol: address(newProtocol),
             stableToken: _stableToken,
-            collateralToken: _collateralToken
+            collateralToken: _collateralToken,
+            collateralRatio: _collateralRatio
         }));
 
-        emit MarketCreated(marketAddr, _stableToken, _collateralToken);
-        return marketAddr;
+        emit MarketCreated(
+            address(newProtocol),
+            _stableToken,
+            _collateralToken,
+            _collateralRatio
+        );
+
+        return address(newProtocol);
     }
 
     /**
-     * @dev Returns all markets
+     * @notice Returns all created markets with full metadata
+     * @return Array of MarketInfo structs
      */
     function getAllMarkets() external view returns (MarketInfo[] memory) {
         return markets;
     }
 
     /**
-     * @dev Returns market address for a stable/collateral pair
+     * @notice Returns only the addresses of deployed Protocol contracts
+     * @return Array of protocol contract addresses
      */
-    function getMarketAddress(address stable, address collateral) external view returns (address) {
-        return getMarket[keccak256(abi.encodePacked(stable, collateral))];
-    }
-
-    /**
-     * @dev Total number of markets created
-     */
-    function totalMarkets() external view returns (uint256) {
-        return markets.length;
+    function getAllMarketAddresses() external view returns (address[] memory) {
+        address[] memory result = new address[](markets.length);
+        for (uint256 i = 0; i < markets.length; i++) {
+            result[i] = markets[i].protocol;
+        }
+        return result;
     }
 }

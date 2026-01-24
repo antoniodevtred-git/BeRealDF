@@ -1,0 +1,7 @@
+1-Invalid stableToken
+2-Invalid collateralToken
+3-Invalid collateralRatio
+4-Amount must be greater than zero
+5-Token transfer failed
+6-Amount must be greater than zero
+7-Insufficient balance to withdraw
