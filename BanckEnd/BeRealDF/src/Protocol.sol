@@ -270,6 +270,7 @@ contract Protocol is Ownable, ReentrancyGuard {
     function liquidate(address borrower) external nonReentrant {
         BorrowerInfo storage info = borrowers[borrower];
 
+        require(info.amountBorrowed > 0, "13");
         require(isLiquidatable(borrower), "15");
         require(info.amountBorrowed > 0, "16");
         require(info.collateralDeposited > 0, "17");

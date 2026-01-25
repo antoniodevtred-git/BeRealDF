@@ -362,7 +362,7 @@ contract ProtocolLenderTest is Test {
         uint256 collateralAmount = 1000 ether;
         uint256 borrowAmount = 800 ether;
 
-        // Setup: borrower deposita colateral y pide préstamo
+        // Setup: borrower deposit collaterall and borrow
         vm.startPrank(borrower);
         collateralToken.approve(address(protocol), collateralAmount);
         protocol.depositCollateral(collateralAmount);
@@ -385,11 +385,11 @@ contract ProtocolLenderTest is Test {
         vm.startPrank(liquidator);
         stableToken.approve(address(protocol), borrowAmount);
 
-        // Esperamos evento
+        // wait event
         vm.expectEmit(true, true, true, true);
         emit Protocol.Liquidated(liquidator, borrower, borrowAmount, collateralAmount);
 
-        // Ejecutamos liquidación
+        // Build liquidation
         protocol.liquidate(borrower);
 
         // Check: borrower reset
@@ -397,11 +397,43 @@ contract ProtocolLenderTest is Test {
         assertEq(info.amountBorrowed, 0, "Borrow not reset");
         assertEq(info.collateralDeposited, 0, "Collateral not reset");
 
-        // Check: liquidator recibe el colateral
+        // Check: liquidator recive colateral
         assertEq(collateralToken.balanceOf(liquidator), collateralAmount);
 
         vm.stopPrank();
     }
+
+    function testLiquidate_RevertsIfNoLoanExists() public {
+        vm.expectRevert(bytes("13")); 
+        protocol.liquidate(borrower);
+    }
+
+    function testLiquidate_RevertsIfNotLiquidable() public {
+        // Setup: borrower deposits collateral and borrows
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), borrowAmount);
+        protocol.deposit(borrowAmount);
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // Simulate a short time (still not liquidable)
+        vm.warp(block.timestamp + 1 days);
+
+        vm.expectRevert(bytes("15"));
+        protocol.liquidate(borrower);
+    }
+
 
 }
 
