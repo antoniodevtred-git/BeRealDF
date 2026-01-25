@@ -357,5 +357,51 @@ contract ProtocolLenderTest is Test {
 
         vm.stopPrank();
     }
+
+    function testLiquidate_success() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        // Setup: borrower deposita colateral y pide préstamo
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        vm.startPrank(lender);
+        protocol.deposit(1000 ether);
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // Manipulamos el estado para forzar la liquidación (por ejemplo, bajamos el ratio)
+        vm.warp(block.timestamp + 370 days); // Simulamos vencimiento del préstamo
+
+        // Approve liquidator
+        address liquidator = address(0x999);
+        stableToken.transfer(liquidator, borrowAmount);
+        vm.startPrank(liquidator);
+        stableToken.approve(address(protocol), borrowAmount);
+
+        // Esperamos evento
+        vm.expectEmit(true, true, true, true);
+        emit Protocol.Liquidated(liquidator, borrower, borrowAmount, collateralAmount);
+
+        // Ejecutamos liquidación
+        protocol.liquidate(borrower);
+
+        // Check: borrower reset
+        Protocol.BorrowerInfo memory info = protocol.getBorrower(borrower);
+        assertEq(info.amountBorrowed, 0, "Borrow not reset");
+        assertEq(info.collateralDeposited, 0, "Collateral not reset");
+
+        // Check: liquidator recibe el colateral
+        assertEq(collateralToken.balanceOf(liquidator), collateralAmount);
+
+        vm.stopPrank();
+    }
+
 }
 
