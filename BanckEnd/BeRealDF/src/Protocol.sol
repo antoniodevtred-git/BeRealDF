@@ -26,6 +26,7 @@ contract Protocol is Ownable, ReentrancyGuard {
         uint256 amountBorrowed; // Total amount borrowed
         uint256 collateralDeposited; // Collateral deposited
         uint256 borrowTimestamp; // Time Borrow
+        uint256 lastIteration;
     }
     //Mapings
     mapping(address => LenderInfo) public lenders;
@@ -36,6 +37,8 @@ contract Protocol is Ownable, ReentrancyGuard {
     event Deposited(address indexed lender, uint256 amount);
     event Withdrawn(address indexed lender, uint256 amount);
     event CollateralDeposited(address indexed borrower, uint256 amount);
+    event Borrowed(address indexed borrower, uint256 amount);
+
 
 
 
@@ -100,7 +103,6 @@ contract Protocol is Ownable, ReentrancyGuard {
         emit Withdrawn(msg.sender, amount);
     }
 
-
     /**
      * @notice Returns the total amount supplied by a lender.
      * @param lender The address of the lender.
@@ -130,6 +132,47 @@ contract Protocol is Ownable, ReentrancyGuard {
         emit CollateralDeposited(msg.sender, amount);
     }
 
+    /**
+    * @notice Returns the full borrower information struct
+    * @param borrower Address of the borrower
+    */
+    function getBorrower(address borrower)
+        external
+        view
+        returns (BorrowerInfo memory)
+    {
+        return borrowers[borrower];
+    }
 
+    /**
+    * @notice Allows a borrower to request a loan using deposited collateral.
+    * @param amount The amount of stable tokens to borrow.
+    * @dev Requires enough collateral and available liquidity in the pool.
+    * Emits a {Borrowed} event.
+    */
+    function borrow(uint256 amount) external nonReentrant {
+        require(amount > 0, "9"); // Amount must be greater than zero
+
+        BorrowerInfo storage info = borrowers[msg.sender];
+
+        require(info.collateralDeposited > 0, "10");
+
+        // Max borrowable = collateral * (collateralRatio / 10000)
+        uint256 maxBorrowable = (info.collateralDeposited * collateralRatio) / BASIS_POINTS;
+
+        require(info.amountBorrowed + amount <= maxBorrowable, "11");
+        require(amount <= totalSupplied, "12");
+
+        // ✅ Effects
+        info.amountBorrowed += amount;
+        info.borrowTimestamp = block.timestamp;
+        info.lastIteration = block.timestamp;
+        totalSupplied -= amount;
+
+        // ✅ Interactions
+        stableToken.safeTransfer(msg.sender, amount);
+
+        emit Borrowed(msg.sender, amount);
+    }
 }
 

@@ -122,8 +122,8 @@ contract ProtocolLenderTest is Test {
         protocol.depositCollateral(amount);
 
         // Check borrower's internal state
-        (uint256 borrowed, uint256 collateralDeposited, ) = protocol.borrowers(borrower);
-        assertEq(collateralDeposited, amount, "Collateral not updated");
+        Protocol.BorrowerInfo memory info = protocol.getBorrower(borrower);
+        assertEq(info.collateralDeposited, amount, "Collateral not updated");
 
         // Check balance in the protocol
         assertEq(collateralToken.balanceOf(address(protocol)), amount);
@@ -161,6 +161,84 @@ contract ProtocolLenderTest is Test {
         protocol.depositCollateral(amount);
 
         vm.stopPrank();
+    }
+
+    function testBorrow_success() public {
+        uint256 depositCollateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether; // With 80% collateral ratio
+
+        // Setup: borrower deposita colateral
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), depositCollateralAmount);
+        protocol.depositCollateral(depositCollateralAmount);
+
+        // Setup: lender deposita liquidez
+        vm.stopPrank();
+        vm.startPrank(lender);
+        protocol.deposit(1000 * 1e6); // 1000 USDC con 6 decimales
+
+        // Borrow
+        vm.stopPrank();
+        vm.startPrank(borrower);
+
+        vm.expectEmit(true, false, false, true);
+        emit Protocol.Borrowed(borrower, borrowAmount);
+
+        protocol.borrow(borrowAmount);
+
+        // Assert: balances y estado interno
+        Protocol.BorrowerInfo memory info = protocol.getBorrower(borrower);
+        assertEq(info.amountBorrowed, borrowAmount, "Borrowed amount mismatch");
+        assertEq(stableToken.balanceOf(borrower), borrowAmount, "Borrower didn't receive funds");
+
+        vm.stopPrank();
+    }
+
+    function testBorrow_revertIfAmountZero() public {
+        vm.prank(borrower);
+
+        vm.expectRevert(bytes("9"));
+        protocol.borrow(0);
+    }
+
+    function testBorrow_revertIfNoCollateral() public {
+        // Add liquidity to the pool
+        vm.prank(lender);
+        protocol.deposit(1_000 * 1e6);
+
+        vm.prank(borrower);
+        vm.expectRevert(bytes("10")); // exceeds collateral limit
+        protocol.borrow(100 ether);
+    }
+
+    function testBorrow_revertIfExceedsCollateralLimit() public {
+        // Borrower deposits collateral
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), 100 ether);
+        protocol.depositCollateral(100 ether);
+        vm.stopPrank();
+
+        // Lender provides liquidity
+        vm.prank(lender);
+        protocol.deposit(1_000 * 1e6);
+
+        // 80% of 100 = 80 max
+        vm.prank(borrower);
+        vm.expectRevert(bytes("11"));
+        protocol.borrow(81 ether);
+    }
+
+    function testBorrow_revertIfInsufficientLiquidity() public {
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), 1_000 ether);
+        protocol.depositCollateral(1_000 ether);
+        vm.stopPrank();
+
+        // No lender deposit here
+
+        vm.prank(borrower);
+        vm.expectRevert(bytes("12"));
+        protocol.borrow(800 ether);
     }
 
 }
