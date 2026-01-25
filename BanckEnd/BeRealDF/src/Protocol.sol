@@ -38,11 +38,11 @@ contract Protocol is Ownable, ReentrancyGuard {
     event Withdrawn(address indexed lender, uint256 amount);
     event CollateralDeposited(address indexed borrower, uint256 amount);
     event Borrowed(address indexed borrower, uint256 amount);
-
-
+    event Repaid(address indexed borrower, uint256 amount);
 
 
     //Modifiers
+    
     constructor(
         address _stableToken,
         address _collateralToken,
@@ -174,5 +174,33 @@ contract Protocol is Ownable, ReentrancyGuard {
 
         emit Borrowed(msg.sender, amount);
     }
+
+    /**
+     * @notice Allows a borrower to repay their borrowed stable tokens.
+     * @param amount The amount of stable tokens to repay.
+     * @dev The borrower must approve the protocol to spend tokens beforehand.
+     * Emits a {Repaid} event.
+     */
+    function repay(uint256 amount) external nonReentrant {
+        require(amount > 0, "9"); 
+
+        BorrowerInfo storage info = borrowers[msg.sender];
+        require(info.amountBorrowed > 0, "13"); 
+        require(amount <= info.amountBorrowed, "14"); 
+
+        // Effects
+        info.amountBorrowed -= amount;
+
+        if (info.amountBorrowed == 0) {
+            info.borrowTimestamp = 0;
+            info.lastIteration = block.timestamp;
+        }
+
+        // Interactions
+        stableToken.safeTransferFrom(msg.sender, address(this), amount);
+
+        emit Repaid(msg.sender, amount);
+    }
+
 }
 

@@ -272,5 +272,90 @@ contract ProtocolLenderTest is Test {
         protocol.borrow(800 ether);
     }
 
+   function testRepay_success() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 * 1e6;
+        uint256 repayAmount = borrowAmount;
+
+        // Borrower deposits collateral
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        // Lender deposits stable tokens
+        vm.startPrank(lender);
+        protocol.deposit(1000 * 1e6); // 1000 USDC
+        vm.stopPrank();
+
+        // Borrower borrows
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+
+        // Approve repayment
+        stableToken.approve(address(protocol), repayAmount);
+
+        // Expect event
+        vm.expectEmit(true, false, false, true);
+        emit Protocol.Repaid(borrower, repayAmount);
+
+        protocol.repay(repayAmount);
+
+        // Check state
+        Protocol.BorrowerInfo memory info = protocol.getBorrower(borrower);
+        assertEq(info.amountBorrowed, 0, "Borrowed amount should be 0");
+        assertEq(stableToken.balanceOf(address(protocol)), 1000 * 1e6, "Protocol balance mismatch");
+
+        vm.stopPrank();
+    }
+
+    function testRepay_RevertIfAmountZero() public {
+        vm.startPrank(borrower);
+
+        vm.expectRevert(bytes("9"));
+        protocol.repay(0);
+
+        vm.stopPrank();
+    }
+
+    function testRepay_RevertIfNoActiveLoan() public {
+    vm.startPrank(borrower);
+
+    uint256 repayAmount = 100 * 1e6;
+        stableToken.approve(address(protocol), repayAmount);
+
+        vm.expectRevert(bytes("13"));
+        protocol.repay(repayAmount);
+
+        vm.stopPrank();
+    }
+
+    function testRepay_RevertIfRepayingTooMuch() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 500 * 1e6;
+
+        // Setup: borrower deposits collateral
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        // Setup: lender adds liquidity
+        vm.startPrank(lender);
+        protocol.deposit(1000 * 1e6);
+        vm.stopPrank();
+
+        // Borrow
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+
+        uint256 tooMuch = borrowAmount + 1;
+        stableToken.approve(address(protocol), tooMuch);
+
+        vm.expectRevert(bytes("14"));
+        protocol.repay(tooMuch);
+
+        vm.stopPrank();
+    }
 }
 
