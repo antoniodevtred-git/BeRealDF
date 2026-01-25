@@ -40,9 +40,9 @@ contract MarketFactory {
         address _collateralToken,
         uint256 _collateralRatio
     ) external returns (address) {
-        require(_stableToken != address(0), "Stable token is zero");
-        require(_collateralToken != address(0), "Collateral token is zero");
-        require(_stableToken != _collateralToken, "Tokens must be different");
+        require(_stableToken != address(0), "1");
+        require(_collateralToken != address(0), "2");
+        require(_stableToken != _collateralToken, "3");
 
         // Deploy new Protocol contract
         Protocol newProtocol = new Protocol(
