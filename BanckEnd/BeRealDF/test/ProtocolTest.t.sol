@@ -11,6 +11,11 @@ contract ProtocolLenderTest is Test {
     MockToken collateralToken;
 
     address lender = address(0x123);
+    address borrower = address(0x234);
+
+
+    event CollateralDeposited(address indexed borrower, uint256 amount);
+
     uint256 initialSupply = 1_000_000 ether;
     uint256 depositAmount = 1_000 ether;
 
@@ -25,6 +30,9 @@ contract ProtocolLenderTest is Test {
             8000,   // 80% collateral ratio
             address(this) // owner
         );
+
+        // Transfer collateralToken to borrower
+        collateralToken.transfer(borrower, 1000 ether);
 
         // Transfer stableTokens to lender and approve protocol
         stableToken.transfer(lender, depositAmount);
@@ -89,15 +97,71 @@ contract ProtocolLenderTest is Test {
     }
 
     function testGetLenderBalance() public {
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), depositAmount);
+        protocol.deposit(depositAmount);
+        vm.stopPrank();
 
-    vm.startPrank(lender);
-    stableToken.approve(address(protocol), depositAmount);
-    protocol.deposit(depositAmount);
-    vm.stopPrank();
+        uint256 balance = protocol.getLenderBalance(lender);
+        assertEq(balance, depositAmount, "Lender balance mismatch");
+    }
 
-    uint256 balance = protocol.getLenderBalance(lender);
-    assertEq(balance, depositAmount, "Lender balance mismatch");
+    function testDepositCollateral() public {
+        vm.startPrank(borrower);
+
+        uint256 amount = 500 ether;
+
+        // Approve the protocol to spend collateral
+        collateralToken.approve(address(protocol), amount);
+
+        // Expect event
+        vm.expectEmit(true, true, false, true);
+        emit Protocol.CollateralDeposited(borrower, amount);
+
+        // Call depositCollateral
+        protocol.depositCollateral(amount);
+
+        // Check borrower's internal state
+        (uint256 borrowed, uint256 collateralDeposited, ) = protocol.borrowers(borrower);
+        assertEq(collateralDeposited, amount, "Collateral not updated");
+
+        // Check balance in the protocol
+        assertEq(collateralToken.balanceOf(address(protocol)), amount);
+
+        vm.stopPrank();
+    }
+
+    function testDepositCollateral_RevertsIfAmountZero() public {
+        vm.startPrank(borrower);
+
+        vm.expectRevert(bytes("8"));
+        protocol.depositCollateral(0);
+
+        vm.stopPrank();
+    }
+
+    function testDepositCollateral_RevertsIfNoApproval() public {
+        uint256 amount = 500 ether;
+
+        vm.startPrank(borrower);
+
+        vm.expectRevert(); // SafeERC20 will revert on failed transferFrom
+        protocol.depositCollateral(amount);
+
+        vm.stopPrank();
+    }
+
+    function testDepositCollateral_RevertsIfInsufficientBalance() public {
+        uint256 amount = 2_000_000 ether; // more than user has
+
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), amount);
+
+        vm.expectRevert(); // Will revert on transferFrom due to insufficient balance
+        protocol.depositCollateral(amount);
+
+        vm.stopPrank();
+    }
+
 }
 
-
-}

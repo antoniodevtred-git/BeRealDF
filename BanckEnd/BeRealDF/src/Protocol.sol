@@ -21,12 +21,22 @@ contract Protocol is Ownable, ReentrancyGuard {
         uint256 amountSupplied;       // Total amount deposited
         uint256 depositTimestamp;     // Last deposit time
     }
+
+    struct BorrowerInfo {
+        uint256 amountBorrowed; // Total amount borrowed
+        uint256 collateralDeposited; // Collateral deposited
+        uint256 borrowTimestamp; // Time Borrow
+    }
     //Mapings
     mapping(address => LenderInfo) public lenders;
+    mapping(address => BorrowerInfo) public borrowers;
+
 
     //Events
     event Deposited(address indexed lender, uint256 amount);
     event Withdrawn(address indexed lender, uint256 amount);
+    event CollateralDeposited(address indexed borrower, uint256 amount);
+
 
 
     //Modifiers
@@ -98,6 +108,26 @@ contract Protocol is Ownable, ReentrancyGuard {
      */
     function getLenderBalance(address lender) external view returns (uint256 amountSupplied) {
         return lenders[lender].amountSupplied;
+    }
+
+    /**
+    * @notice Allows a user to deposit collateral tokens to enable borrowing.
+    * @param amount The amount of collateral tokens to deposit.
+    * @dev The user must approve the protocol to transfer collateral tokens.
+    * Emits a {CollateralDeposited} event.
+    */
+    function depositCollateral(uint256 amount) external nonReentrant {
+        // ✅ Checks
+        require(amount > 0, "8"); 
+
+        // ✅ Effects
+        borrowers[msg.sender].collateralDeposited += amount;
+        borrowers[msg.sender].borrowTimestamp = block.timestamp;
+
+        // ✅ Interactions
+        collateralToken.safeTransferFrom(msg.sender, address(this), amount);
+
+        emit CollateralDeposited(msg.sender, amount);
     }
 
 
