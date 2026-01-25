@@ -57,4 +57,56 @@ contract MarketFactoryTest is Test {
 
         vm.stopPrank();
     }
+
+    function testCreateMarket_success() public {
+        uint256 collateralRatio = 8000;
+
+        address marketAddr = factory.createMarket(
+            address(stableToken),
+            address(collateralToken),
+            collateralRatio
+        );
+
+        assertTrue(marketAddr != address(0));
+        MarketFactory.MarketInfo[] memory markets = factory.getAllMarkets();
+        assertEq(markets.length, 1);
+        assertEq(markets[0].protocol, marketAddr);
+    }
+
+    function testCreateMarket_RevertsIfZeroAddressStable() public {
+        vm.expectRevert(bytes("1"));
+        factory.createMarket(
+            address(0),
+            address(collateralToken),
+            8000
+        );
+    }
+
+    function testCreateMarket_RevertsIfZeroAddressCollateral() public {
+        vm.expectRevert(bytes("2"));
+        factory.createMarket(
+            address(stableToken),
+            address(0),
+            8000
+        );
+    }
+
+    function testCreateMarket_RevertsIfSameTokens () public {
+        vm.expectRevert(bytes("3"));
+        factory.createMarket(
+            address(stableToken),
+            address(stableToken),
+            8000
+        );
+    }
+
+    function testGetAllMarketAddresses() public {
+        factory.createMarket(address(stableToken), address(collateralToken), 8000);
+        address[] memory addresses = factory.getAllMarketAddresses();
+        assertEq(addresses.length, 1);
+        assertTrue(addresses[0] != address(0));
+    }
+
+
 }
+

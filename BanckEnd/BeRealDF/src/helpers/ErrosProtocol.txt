@@ -5,3 +5,11 @@
 5-Token transfer failed
 6-Amount must be greater than zero
 7-Insufficient balance to withdraw
+8-Amount must be greater than zero
+9-Amount must be greater than zero
+10-No collateral deposited
+11-Exceeds borrow limit
+12-Not enough liquidity in the pool
+13-No active loan
+14-Can't repay more than owed
+
