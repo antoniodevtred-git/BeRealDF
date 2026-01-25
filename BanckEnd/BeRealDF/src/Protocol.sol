@@ -21,15 +21,28 @@ contract Protocol is Ownable, ReentrancyGuard {
         uint256 amountSupplied;       // Total amount deposited
         uint256 depositTimestamp;     // Last deposit time
     }
+
+    struct BorrowerInfo {
+        uint256 amountBorrowed; // Total amount borrowed
+        uint256 collateralDeposited; // Collateral deposited
+        uint256 borrowTimestamp; // Time Borrow
+        uint256 lastIteration;
+    }
     //Mapings
     mapping(address => LenderInfo) public lenders;
+    mapping(address => BorrowerInfo) public borrowers;
+
 
     //Events
     event Deposited(address indexed lender, uint256 amount);
     event Withdrawn(address indexed lender, uint256 amount);
+    event CollateralDeposited(address indexed borrower, uint256 amount);
+    event Borrowed(address indexed borrower, uint256 amount);
+    event Repaid(address indexed borrower, uint256 amount);
 
 
     //Modifiers
+    
     constructor(
         address _stableToken,
         address _collateralToken,
@@ -90,7 +103,6 @@ contract Protocol is Ownable, ReentrancyGuard {
         emit Withdrawn(msg.sender, amount);
     }
 
-
     /**
      * @notice Returns the total amount supplied by a lender.
      * @param lender The address of the lender.
@@ -100,6 +112,95 @@ contract Protocol is Ownable, ReentrancyGuard {
         return lenders[lender].amountSupplied;
     }
 
+    /**
+    * @notice Allows a user to deposit collateral tokens to enable borrowing.
+    * @param amount The amount of collateral tokens to deposit.
+    * @dev The user must approve the protocol to transfer collateral tokens.
+    * Emits a {CollateralDeposited} event.
+    */
+    function depositCollateral(uint256 amount) external nonReentrant {
+        // ✅ Checks
+        require(amount > 0, "8"); 
+
+        // ✅ Effects
+        borrowers[msg.sender].collateralDeposited += amount;
+        borrowers[msg.sender].borrowTimestamp = block.timestamp;
+
+        // ✅ Interactions
+        collateralToken.safeTransferFrom(msg.sender, address(this), amount);
+
+        emit CollateralDeposited(msg.sender, amount);
+    }
+
+    /**
+    * @notice Returns the full borrower information struct
+    * @param borrower Address of the borrower
+    */
+    function getBorrower(address borrower)
+        external
+        view
+        returns (BorrowerInfo memory)
+    {
+        return borrowers[borrower];
+    }
+
+    /**
+    * @notice Allows a borrower to request a loan using deposited collateral.
+    * @param amount The amount of stable tokens to borrow.
+    * @dev Requires enough collateral and available liquidity in the pool.
+    * Emits a {Borrowed} event.
+    */
+    function borrow(uint256 amount) external nonReentrant {
+        require(amount > 0, "9"); // Amount must be greater than zero
+
+        BorrowerInfo storage info = borrowers[msg.sender];
+
+        require(info.collateralDeposited > 0, "10");
+
+        // Max borrowable = collateral * (collateralRatio / 10000)
+        uint256 maxBorrowable = (info.collateralDeposited * collateralRatio) / BASIS_POINTS;
+
+        require(info.amountBorrowed + amount <= maxBorrowable, "11");
+        require(amount <= totalSupplied, "12");
+
+        // ✅ Effects
+        info.amountBorrowed += amount;
+        info.borrowTimestamp = block.timestamp;
+        info.lastIteration = block.timestamp;
+        totalSupplied -= amount;
+
+        // ✅ Interactions
+        stableToken.safeTransfer(msg.sender, amount);
+
+        emit Borrowed(msg.sender, amount);
+    }
+
+    /**
+     * @notice Allows a borrower to repay their borrowed stable tokens.
+     * @param amount The amount of stable tokens to repay.
+     * @dev The borrower must approve the protocol to spend tokens beforehand.
+     * Emits a {Repaid} event.
+     */
+    function repay(uint256 amount) external nonReentrant {
+        require(amount > 0, "9"); 
+
+        BorrowerInfo storage info = borrowers[msg.sender];
+        require(info.amountBorrowed > 0, "13"); 
+        require(amount <= info.amountBorrowed, "14"); 
+
+        // Effects
+        info.amountBorrowed -= amount;
+
+        if (info.amountBorrowed == 0) {
+            info.borrowTimestamp = 0;
+            info.lastIteration = block.timestamp;
+        }
+
+        // Interactions
+        stableToken.safeTransferFrom(msg.sender, address(this), amount);
+
+        emit Repaid(msg.sender, amount);
+    }
 
 }
 
