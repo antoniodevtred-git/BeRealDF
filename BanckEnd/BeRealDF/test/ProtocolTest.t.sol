@@ -15,6 +15,8 @@ contract ProtocolLenderTest is Test {
 
 
     event CollateralDeposited(address indexed borrower, uint256 amount);
+    event Borrowed(address indexed borrower, uint256 amount);
+
 
     uint256 initialSupply = 1_000_000 ether;
     uint256 depositAmount = 1_000 ether;
@@ -131,6 +133,35 @@ contract ProtocolLenderTest is Test {
         vm.stopPrank();
     }
 
+    function testDeposit_success() public {
+        uint256 amount = 1_000 * 1e6; // 1000 USDC (6 decimals)
+
+        // Transfer tokens to lender 
+        stableToken.transfer(lender, amount);
+
+        // Lender approve protocol
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), amount);
+
+        // Espera el evento
+        vm.expectEmit(true, false, false, true);
+        emit Protocol.Deposited(lender, amount);
+
+        // call a deposit()
+        protocol.deposit(amount);
+        vm.stopPrank();
+
+        // Verify state
+        (uint256 supplied, ) = protocol.lenders(lender);
+        assertEq(supplied, amount, "Lender amount mismatch");
+
+        assertEq(protocol.totalSupplied(), amount, "Total supplied mismatch");
+
+        // Verify amount contract
+        assertEq(stableToken.balanceOf(address(protocol)), amount, "Protocol token balance incorrect");
+    }
+
+
     function testDepositCollateral_RevertsIfAmountZero() public {
         vm.startPrank(borrower);
 
@@ -165,34 +196,34 @@ contract ProtocolLenderTest is Test {
 
     function testBorrow_success() public {
         uint256 depositCollateralAmount = 1000 ether;
-        uint256 borrowAmount = 800 ether; // With 80% collateral ratio
+        uint256 borrowAmount = 800 * 1e6; // ✅ USDC decimals
 
-        // Setup: borrower deposita colateral
+        // borrower deposits collateral
         vm.startPrank(borrower);
         collateralToken.approve(address(protocol), depositCollateralAmount);
         protocol.depositCollateral(depositCollateralAmount);
-
-        // Setup: lender deposita liquidez
         vm.stopPrank();
+
+        // lender provides liquidity
         vm.startPrank(lender);
-        protocol.deposit(1000 * 1e6); // 1000 USDC con 6 decimales
-
-        // Borrow
+        protocol.deposit(1000 * 1e6);
         vm.stopPrank();
+
+        // borrower borrows
         vm.startPrank(borrower);
 
         vm.expectEmit(true, false, false, true);
-        emit Protocol.Borrowed(borrower, borrowAmount);
+        emit Borrowed(borrower, borrowAmount);
 
         protocol.borrow(borrowAmount);
 
-        // Assert: balances y estado interno
         Protocol.BorrowerInfo memory info = protocol.getBorrower(borrower);
-        assertEq(info.amountBorrowed, borrowAmount, "Borrowed amount mismatch");
-        assertEq(stableToken.balanceOf(borrower), borrowAmount, "Borrower didn't receive funds");
+        assertEq(info.amountBorrowed, borrowAmount);
+        assertEq(stableToken.balanceOf(borrower), borrowAmount);
 
         vm.stopPrank();
     }
+
 
     function testBorrow_revertIfAmountZero() public {
         vm.prank(borrower);
