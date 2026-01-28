@@ -12,4 +12,7 @@
 12-Not enough liquidity in the pool
 13-No active loan
 14-Can't repay more than owed
+15-Not liquidable
+16-No debt
+17-No collateral
 

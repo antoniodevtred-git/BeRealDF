@@ -357,5 +357,304 @@ contract ProtocolLenderTest is Test {
 
         vm.stopPrank();
     }
-}
 
+    function testRepay_MakesLoanNoLongerLiquidable() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        // Setup: borrower deposits collateral and borrows
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), borrowAmount);
+        protocol.deposit(borrowAmount);
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // Warp to between 9 and 12 months (require at least 50% repaid)
+        vm.warp(block.timestamp + 300 days);
+
+        // Borrower repays 60%
+        uint256 repayAmount = (borrowAmount * 60) / 100;
+        stableToken.transfer(borrower, repayAmount);
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), repayAmount);
+        protocol.repay(repayAmount);
+        vm.stopPrank();
+
+        // Should no longer be liquidable
+        bool liquidable = protocol.isLiquidatable(borrower);
+        assertFalse(liquidable, "Loan should not be liquidable after enough repayment");
+    }
+
+    function testLiquidate_success() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        // Setup: borrower deposit collaterall and borrow
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        vm.startPrank(lender);
+        protocol.deposit(1000 ether);
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // Manipulamos el estado para forzar la liquidación (por ejemplo, bajamos el ratio)
+        vm.warp(block.timestamp + 370 days); // Simulamos vencimiento del préstamo
+
+        // Approve liquidator
+        address liquidator = address(0x999);
+        stableToken.transfer(liquidator, borrowAmount);
+        vm.startPrank(liquidator);
+        stableToken.approve(address(protocol), borrowAmount);
+
+        // wait event
+        vm.expectEmit(true, true, true, true);
+        emit Protocol.Liquidated(liquidator, borrower, borrowAmount, collateralAmount);
+
+        // Build liquidation
+        protocol.liquidate(borrower);
+
+        // Check: borrower reset
+        Protocol.BorrowerInfo memory info = protocol.getBorrower(borrower);
+        assertEq(info.amountBorrowed, 0, "Borrow not reset");
+        assertEq(info.collateralDeposited, 0, "Collateral not reset");
+
+        // Check: liquidator recive colateral
+        assertEq(collateralToken.balanceOf(liquidator), collateralAmount);
+
+        vm.stopPrank();
+    }
+
+    function testLiquidate_RevertsIfNoLoanExists() public {
+        vm.expectRevert(bytes("13")); 
+        protocol.liquidate(borrower);
+    }
+
+    function testLiquidate_RevertsIfNotLiquidable() public {
+        // Setup: borrower deposits collateral and borrows
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), borrowAmount);
+        protocol.deposit(borrowAmount);
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // Simulate a short time (still not liquidable)
+        vm.warp(block.timestamp + 1 days);
+
+        vm.expectRevert(bytes("15"));
+        protocol.liquidate(borrower);
+    }
+
+    function testLiquidate_LowCollateralRatio() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        //  Setup: Borrower deposits collateral 
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        //  Setup: Lender provides liquidity 
+        stableToken.transfer(lender, borrowAmount);
+        vm.startPrank(lender);
+
+        stableToken.approve(address(protocol), borrowAmount);
+        protocol.deposit(borrowAmount);
+        vm.stopPrank();
+
+        //  Borrower borrows funds 
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        //  Simulate drop in collateral value 
+        protocol.testSetCollateral(borrower, 600 ether);
+
+        //  Debug logs (opcional, puedes quitar después) 
+        bytes32 base = keccak256(abi.encode(borrower, uint256(5))); // slot 5 for `borrowers`
+        bytes32 loaded = vm.load(address(protocol), bytes32(uint256(base) + 2));
+        console2.log("Collateral after store:", uint256(loaded));
+
+        bool liquidable = protocol.isLiquidatable(borrower);
+        console2.log("Is liquidatable?", liquidable);
+        require(liquidable, "Should be liquidatable now");
+
+        //  Perform liquidation 
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), borrowAmount); 
+        vm.expectEmit(true, true, false, false);
+        emit Protocol.Liquidated(lender, borrower, borrowAmount, 600 ether);
+        protocol.liquidate(borrower);
+        vm.stopPrank();
+
+        //  Check borrower state reset 
+        Protocol.BorrowerInfo memory info = protocol.getBorrower(borrower);
+        assertEq(info.amountBorrowed, 0, "Loan not cleared after liquidation");
+        assertEq(info.collateralDeposited, 0, "Collateral not cleared after liquidation");
+    }
+
+    function testLiquidate_RevertsIfRepaidLessThan25PercentBetween6And9Months() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        // ===== Setup borrower =====
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        // ===== Setup lender =====
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), borrowAmount);
+        protocol.deposit(borrowAmount);
+        vm.stopPrank();
+
+        // ===== Borrow funds =====
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // Simulate passage of time: 7 months (between 6 and 9)
+        vm.warp(block.timestamp + 210 days);
+
+        // Liquidator setup
+        address liquidator = lender; // or use another address if you prefer
+        stableToken.transfer(liquidator, borrowAmount); // Ensure liquidator has enough
+        vm.startPrank(liquidator);
+        stableToken.approve(address(protocol), borrowAmount);
+
+        // Expect event
+        vm.expectEmit(true, true, true, true);
+        emit Protocol.Liquidated(liquidator, borrower, borrowAmount, collateralAmount);
+
+        // Perform liquidation
+        protocol.liquidate(borrower);
+        vm.stopPrank();
+
+        // Post-check
+        Protocol.BorrowerInfo memory info = protocol.getBorrower(borrower);
+        assertEq(info.amountBorrowed, 0);
+        assertEq(info.collateralDeposited, 0);
+    }
+    
+    function testLiquidate_RevertsIfRepaidLessThan50PercentBetween9And12Months() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+        uint256 repaidAmount = 300 ether; // Menos del 50%
+
+        // ===== Setup borrower =====
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        // ===== Setup lender and provide liquidity =====
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), 1000 ether);
+        protocol.deposit(1000 ether);
+        vm.stopPrank();
+
+        // ===== Borrow funds =====
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // ===== Repay only 300 ether (menos del 50%) =====
+        stableToken.transfer(borrower, repaidAmount);
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), repaidAmount);
+        protocol.repay(repaidAmount);
+        vm.stopPrank();
+
+        // Simula entre 9 y 12 meses (ej: 300 días)
+        vm.warp(block.timestamp + 300 days);
+
+        // ===== Liquidator setup =====
+        address liquidator = address(0x999);
+        stableToken.transfer(liquidator, borrowAmount - repaidAmount); // Solo necesita cubrir lo restante
+        vm.startPrank(liquidator);
+        stableToken.approve(address(protocol), borrowAmount - repaidAmount);
+
+        // Esperamos el evento
+        vm.expectEmit(true, true, true, true);
+        emit Protocol.Liquidated(liquidator, borrower, borrowAmount - repaidAmount, collateralAmount);
+
+        // ===== Liquidate =====
+        protocol.liquidate(borrower);
+        vm.stopPrank();
+
+        // ===== Check borrower reset =====
+        Protocol.BorrowerInfo memory info = protocol.getBorrower(borrower);
+        assertEq(info.amountBorrowed, 0, "Borrow not cleared");
+        assertEq(info.collateralDeposited, 0, "Collateral not cleared");
+    }
+
+    function testLiquidate_RevertsIfRepaidAtLeast50PercentBetween9And12Months() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+        uint256 repaidAmount = 400 ether; // Exactly 50% repayment
+
+        // ===== Setup: borrower deposits collateral =====
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        // ===== Setup: lender deposits liquidity =====
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), 1000 ether);
+        protocol.deposit(1000 ether);
+        vm.stopPrank();
+
+        // ===== Borrower borrows funds =====
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // ===== Borrower repays 50% of the loan =====
+        stableToken.transfer(borrower, repaidAmount);
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), repaidAmount);
+        protocol.repay(repaidAmount);
+        vm.stopPrank();
+
+        // ===== Simulate time between 9 and 12 months =====
+        vm.warp(block.timestamp + 300 days);
+
+        // ===== Setup: liquidator tries to liquidate =====
+        address liquidator = address(0x999);
+        stableToken.transfer(liquidator, borrowAmount - repaidAmount);
+        vm.startPrank(liquidator);
+        stableToken.approve(address(protocol), borrowAmount - repaidAmount);
+
+        // ===== Expect revert: borrower has repaid 50% between 9 and 12 months =====
+        vm.expectRevert(bytes("15")); // Adjust this error code based on your implementation
+        protocol.liquidate(borrower);
+        vm.stopPrank();
+    }
+}

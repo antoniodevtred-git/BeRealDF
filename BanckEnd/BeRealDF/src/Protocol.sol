@@ -5,6 +5,8 @@ import "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import "../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import "../lib/forge-std/src/console.sol";
+
 
 contract Protocol is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -14,24 +16,28 @@ contract Protocol is Ownable, ReentrancyGuard {
 
     uint256 public immutable collateralRatio;
     uint256 public constant BASIS_POINTS = 10_000;
+ 
+
     uint256 public totalSupplied;
 
     //Structs
     struct LenderInfo {
-        uint256 amountSupplied;       // Total amount deposited
-        uint256 depositTimestamp;     // Last deposit time
+        uint256 amountSupplied;
+        uint256 depositTimestamp;
     }
 
     struct BorrowerInfo {
-        uint256 amountBorrowed; // Total amount borrowed
-        uint256 collateralDeposited; // Collateral deposited
-        uint256 borrowTimestamp; // Time Borrow
+        uint256 amountBorrowed;
+        uint256 initialBorrowAmount;
+        uint256 collateralDeposited;
+        uint256 borrowTimestamp;
         uint256 lastIteration;
+        uint256 amountRepaid;
     }
+    
     //Mapings
     mapping(address => LenderInfo) public lenders;
     mapping(address => BorrowerInfo) public borrowers;
-
 
     //Events
     event Deposited(address indexed lender, uint256 amount);
@@ -39,7 +45,7 @@ contract Protocol is Ownable, ReentrancyGuard {
     event CollateralDeposited(address indexed borrower, uint256 amount);
     event Borrowed(address indexed borrower, uint256 amount);
     event Repaid(address indexed borrower, uint256 amount);
-
+    event Liquidated(address indexed liquidator, address indexed borrower, uint256 repaidAmount, uint256 collateralSeized);
 
     //Modifiers
     
@@ -165,6 +171,7 @@ contract Protocol is Ownable, ReentrancyGuard {
 
         // ✅ Effects
         info.amountBorrowed += amount;
+        info.initialBorrowAmount += amount;
         info.borrowTimestamp = block.timestamp;
         info.lastIteration = block.timestamp;
         totalSupplied -= amount;
@@ -190,6 +197,8 @@ contract Protocol is Ownable, ReentrancyGuard {
 
         // Effects
         info.amountBorrowed -= amount;
+        info.amountRepaid += amount;
+
 
         if (info.amountBorrowed == 0) {
             info.borrowTimestamp = 0;
@@ -201,6 +210,97 @@ contract Protocol is Ownable, ReentrancyGuard {
 
         emit Repaid(msg.sender, amount);
     }
+
+    /**
+    * @notice Returns the collateral ratio of a borrower's position.
+    * @param borrower The address of the borrower.
+    * @return ratio The collateral ratio in basis points (10000 = 100%).
+    */
+    function getCollateralRatio(address borrower) public view returns (uint256 ratio) {
+        BorrowerInfo memory info = borrowers[borrower];
+
+        if (info.amountBorrowed == 0) {
+            return type(uint256).max;
+        }
+
+        return (info.collateralDeposited * BASIS_POINTS) / info.amountBorrowed;
+    }
+
+    /**
+    * @notice Checks if a borrower's position is eligible for liquidation.
+    * @param borrower The address of the borrower to check.
+    * @return True if the position can be liquidated, false otherwise.
+    */
+    function isLiquidatable(address borrower) public view returns (bool) {
+        BorrowerInfo storage info = borrowers[borrower];
+
+        if (info.amountBorrowed == 0) return false;
+
+        uint256 timeSinceBorrow = block.timestamp - info.borrowTimestamp;
+
+        // 1. Loan has passed maximum duration (12 months)
+        if (timeSinceBorrow > 365 days) {
+            return true;
+        }
+
+        // 2. Collateral ratio has dropped below required threshold
+        if (getCollateralRatio(borrower) < collateralRatio) {
+            return true;
+        }
+
+        // 3. Between 6 and 9 months, must have repaid at least 25% of initial loan
+        if (timeSinceBorrow > 180 days && timeSinceBorrow <= 270 days) {
+            uint256 minRequired = (info.initialBorrowAmount * 25) / 100;
+            if (info.amountRepaid < minRequired) {
+                return true;
+            }
+        }
+
+        // 4. Between 9 and 12 months, must have repaid at least 50% of initial loan
+        if (timeSinceBorrow > 270 days && timeSinceBorrow <= 365 days) {
+            uint256 minRequired = (info.initialBorrowAmount * 50) / 100;
+            if (info.amountRepaid < minRequired) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+    * @notice Allows anyone to liquidate an undercollateralized borrower's position.
+    * @param borrower The address of the borrower to liquidate.
+    * @dev Transfers collateral to the liquidator and resets borrower's position.
+    */
+    function liquidate(address borrower) external nonReentrant {
+        BorrowerInfo storage info = borrowers[borrower];
+
+        require(info.amountBorrowed > 0, "13");
+        require(isLiquidatable(borrower), "15");
+        require(info.amountBorrowed > 0, "16");
+        require(info.collateralDeposited > 0, "17");
+
+        uint256 debt = info.amountBorrowed;
+        uint256 collateral = info.collateralDeposited;
+
+        // Reset borrower state
+        info.amountBorrowed = 0;
+        info.collateralDeposited = 0;
+        info.borrowTimestamp = 0;
+        info.lastIteration = block.timestamp;
+
+        // Transfer stableToken from liquidator to protocol
+        stableToken.safeTransferFrom(msg.sender, address(this), debt);
+
+        // Transfer collateral to liquidator
+        collateralToken.safeTransfer(msg.sender, collateral);
+
+        emit Liquidated(msg.sender, borrower, debt, collateral);
+    }
+
+    function testSetCollateral(address borrower, uint256 amount) external {
+    borrowers[borrower].collateralDeposited = amount;
+}
 
 }
 
