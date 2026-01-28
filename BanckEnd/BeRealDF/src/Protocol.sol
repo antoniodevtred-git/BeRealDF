@@ -5,6 +5,8 @@ import "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import "../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import "../lib/forge-std/src/console.sol";
+
 
 contract Protocol is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -26,6 +28,7 @@ contract Protocol is Ownable, ReentrancyGuard {
 
     struct BorrowerInfo {
         uint256 amountBorrowed;
+        uint256 initialBorrowAmount;
         uint256 collateralDeposited;
         uint256 borrowTimestamp;
         uint256 lastIteration;
@@ -169,6 +172,7 @@ contract Protocol is Ownable, ReentrancyGuard {
 
         // ✅ Effects
         info.amountBorrowed += amount;
+        info.initialBorrowAmount += amount;
         info.borrowTimestamp = block.timestamp;
         info.lastIteration = block.timestamp;
         totalSupplied -= amount;
@@ -194,6 +198,8 @@ contract Protocol is Ownable, ReentrancyGuard {
 
         // Effects
         info.amountBorrowed -= amount;
+        info.amountRepaid += amount;
+
 
         if (info.amountBorrowed == 0) {
             info.borrowTimestamp = 0;
@@ -228,7 +234,8 @@ contract Protocol is Ownable, ReentrancyGuard {
     * @return True if the position can be liquidated, false otherwise.
     */
     function isLiquidatable(address borrower) public view returns (bool) {
-        BorrowerInfo memory info = borrowers[borrower];
+        BorrowerInfo storage info = borrowers[borrower];
+
         if (info.amountBorrowed == 0) return false;
 
         uint256 timeSinceBorrow = block.timestamp - info.borrowTimestamp;
@@ -243,17 +250,17 @@ contract Protocol is Ownable, ReentrancyGuard {
             return true;
         }
 
-        // 3. Between 6 and 9 months, has not repaid at least 25%
+        // 3. Between 6 and 9 months, must have repaid at least 25% of initial loan
         if (timeSinceBorrow > 180 days && timeSinceBorrow <= 270 days) {
-            uint256 minRequired = (info.amountBorrowed * 25) / 100;
+            uint256 minRequired = (info.initialBorrowAmount * 25) / 100;
             if (info.amountRepaid < minRequired) {
                 return true;
             }
         }
 
-        // 4. Between 9 and 12 months, has not repaid at least 50%
+        // 4. Between 9 and 12 months, must have repaid at least 50% of initial loan
         if (timeSinceBorrow > 270 days && timeSinceBorrow <= 365 days) {
-            uint256 minRequired = (info.amountBorrowed * 50) / 100;
+            uint256 minRequired = (info.initialBorrowAmount * 50) / 100;
             if (info.amountRepaid < minRequired) {
                 return true;
             }
@@ -261,6 +268,7 @@ contract Protocol is Ownable, ReentrancyGuard {
 
         return false;
     }
+
 
     /**
     * @notice Allows anyone to liquidate an undercollateralized borrower's position.
@@ -293,6 +301,9 @@ contract Protocol is Ownable, ReentrancyGuard {
         emit Liquidated(msg.sender, borrower, debt, collateral);
     }
 
+    function testSetCollateral(address borrower, uint256 amount) external {
+    borrowers[borrower].collateralDeposited = amount;
+}
 
 }
 

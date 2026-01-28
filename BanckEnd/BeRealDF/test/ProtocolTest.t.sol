@@ -434,6 +434,53 @@ contract ProtocolLenderTest is Test {
         protocol.liquidate(borrower);
     }
 
+    function testLiquidate_LowCollateralRatio() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        //  Setup: Borrower deposits collateral 
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        //  Setup: Lender provides liquidity 
+        stableToken.transfer(lender, borrowAmount);
+        vm.startPrank(lender);
+
+        stableToken.approve(address(protocol), borrowAmount);
+        protocol.deposit(borrowAmount);
+        vm.stopPrank();
+
+        //  Borrower borrows funds 
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        //  Simulate drop in collateral value 
+        protocol.testSetCollateral(borrower, 600 ether);
+
+        //  Debug logs (opcional, puedes quitar después) 
+        bytes32 base = keccak256(abi.encode(borrower, uint256(5))); // slot 5 for `borrowers`
+        bytes32 loaded = vm.load(address(protocol), bytes32(uint256(base) + 2));
+        console2.log("Collateral after store:", uint256(loaded));
+
+        bool liquidable = protocol.isLiquidatable(borrower);
+        console2.log("Is liquidatable?", liquidable);
+        require(liquidable, "Should be liquidatable now");
+
+        //  Perform liquidation 
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), borrowAmount); 
+        vm.expectEmit(true, true, false, false);
+        emit Protocol.Liquidated(lender, borrower, borrowAmount, 600 ether);
+        protocol.liquidate(borrower);
+        vm.stopPrank();
+
+        //  Check borrower state reset 
+        Protocol.BorrowerInfo memory info = protocol.getBorrower(borrower);
+        assertEq(info.amountBorrowed, 0, "Loan not cleared after liquidation");
+        assertEq(info.collateralDeposited, 0, "Collateral not cleared after liquidation");
+    }
 
 }
-
