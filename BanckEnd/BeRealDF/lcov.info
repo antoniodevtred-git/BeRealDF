@@ -36,11 +36,11 @@ BRH:6
 end_of_record
 TN:
 SF:src/MockToken.sol
-DA:10,60
+DA:10,68
 FN:10,MockToken.constructor
-FNDA:60,MockToken.constructor
-DA:16,60
-DA:17,60
+FNDA:68,MockToken.constructor
+DA:16,68
+DA:17,68
 DA:20,0
 FN:20,MockToken.mint
 FNDA:0,MockToken.mint

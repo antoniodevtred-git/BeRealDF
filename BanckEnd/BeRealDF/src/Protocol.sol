@@ -34,10 +34,10 @@ contract Protocol is Ownable, ReentrancyGuard {
         uint256 lastIteration;
         uint256 amountRepaid;
     }
+    
     //Mapings
     mapping(address => LenderInfo) public lenders;
     mapping(address => BorrowerInfo) public borrowers;
-
 
     //Events
     event Deposited(address indexed lender, uint256 amount);
@@ -46,7 +46,6 @@ contract Protocol is Ownable, ReentrancyGuard {
     event Borrowed(address indexed borrower, uint256 amount);
     event Repaid(address indexed borrower, uint256 amount);
     event Liquidated(address indexed liquidator, address indexed borrower, uint256 repaidAmount, uint256 collateralSeized);
-
 
     //Modifiers
     
@@ -227,7 +226,6 @@ contract Protocol is Ownable, ReentrancyGuard {
         return (info.collateralDeposited * BASIS_POINTS) / info.amountBorrowed;
     }
 
-
     /**
     * @notice Checks if a borrower's position is eligible for liquidation.
     * @param borrower The address of the borrower to check.
@@ -268,7 +266,6 @@ contract Protocol is Ownable, ReentrancyGuard {
 
         return false;
     }
-
 
     /**
     * @notice Allows anyone to liquidate an undercollateralized borrower's position.
