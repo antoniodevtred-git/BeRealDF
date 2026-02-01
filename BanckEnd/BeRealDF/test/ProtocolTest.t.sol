@@ -12,6 +12,7 @@ contract ProtocolLenderTest is Test {
 
     address lender = address(0x123);
     address borrower = address(0x234);
+    address feeRecipient = address(0xBEEF);
 
 
     event CollateralDeposited(address indexed borrower, uint256 amount);
@@ -30,14 +31,19 @@ contract ProtocolLenderTest is Test {
             address(stableToken),
             address(collateralToken),
             8000,   // 80% collateral ratio
-            address(this) // owner
+            address(this), // owner
+            feeRecipient,
+            150
         );
 
         // Transfer collateralToken to borrower
         collateralToken.transfer(borrower, 1000 ether);
 
+        //stableToken.transfer(borrower, 2_000 * 1e6); 
+
         // Transfer stableTokens to lender and approve protocol
         stableToken.transfer(lender, depositAmount);
+
         vm.prank(lender);
         stableToken.approve(address(protocol), depositAmount);
     }
@@ -393,6 +399,51 @@ contract ProtocolLenderTest is Test {
         assertFalse(liquidable, "Loan should not be liquidable after enough repayment");
     }
 
+    function testRepay_TransfersFeeToFeeRecipient() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 * 1e6;
+
+        // Deposita collateral
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        // Lender deposita fondos
+        vm.startPrank(lender);
+        protocol.deposit(1000 * 1e6);
+        vm.stopPrank();
+
+        // Borrower toma préstamo
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+
+        // Adelanta el tiempo para que haya interés y fee
+        vm.warp(block.timestamp + 95 days); // Q2 → 8% interés, 1.5% fee
+
+        // Calcula deuda + fee
+        uint256 interest = (borrowAmount * 800) / 10_000;
+        uint256 fee = (interest * 150) / 10_000;
+        uint256 totalRepay = borrowAmount + interest + fee;
+
+        // Asigna fondos para pagar y aprueba
+        stableToken.transfer(borrower, totalRepay);
+        stableToken.approve(address(protocol), totalRepay + 1 ether);
+
+
+        // Registra balance anterior del feeRecipient
+        uint256 before = stableToken.balanceOf(feeRecipient);
+
+        // Repago
+        protocol.repay(borrowAmount);
+
+        // Verifica que fee fue transferido
+        uint256 afterBalance = stableToken.balanceOf(feeRecipient);
+        assertEq(afterBalance - before, fee, "FeeRecipient debe recibir el fee");
+        vm.stopPrank();
+    }
+
+
     function testLiquidate_success() public {
         uint256 collateralAmount = 1000 ether;
         uint256 borrowAmount = 800 ether;
@@ -636,10 +687,15 @@ contract ProtocolLenderTest is Test {
         protocol.borrow(borrowAmount);
         vm.stopPrank();
 
-        // ===== Borrower repays 50% of the loan =====
-        stableToken.transfer(borrower, repaidAmount);
+        // ===== Borrower repays 50% of the loan + interest + fee =====
+        uint256 totalDebt = borrowAmount; // 800 ether
+        uint256 interest = (totalDebt * 800) / 10_000; // 8% anual
+        uint256 fee = (interest * 150) / 10_000;       // 1.5% del interés
+        uint256 totalRepay = repaidAmount + interest + fee;
+
+        stableToken.transfer(borrower, totalRepay);
         vm.startPrank(borrower);
-        stableToken.approve(address(protocol), repaidAmount);
+        stableToken.approve(address(protocol), totalRepay);
         protocol.repay(repaidAmount);
         vm.stopPrank();
 
@@ -657,4 +713,5 @@ contract ProtocolLenderTest is Test {
         protocol.liquidate(borrower);
         vm.stopPrank();
     }
+
 }
