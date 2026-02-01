@@ -207,29 +207,41 @@ contract Protocol is Ownable, ReentrancyGuard {
         require(info.amountBorrowed > 0, "13");
         require(principalAmount <= info.amountBorrowed, "14");
 
-        // Interés total generado
-        uint256 interest = _calculateInterest(msg.sender);
+        uint256 totalToPay = principalAmount;
+        uint256 protocolFee = 0;
 
-        // Comisión del protocolo (SALE DEL INTERÉS)
-        uint256 protocolFee = (interest * protocolFeeBps) / BASIS_POINTS;
-        uint256 interestAfterFee = interest - protocolFee;
+        // Determine if the borrower is fully repaying the loan
+        bool isFullRepay = principalAmount == info.amountBorrowed;
 
-        // ⚠️ El borrower SOLO paga lo mismo que antes
-        uint256 totalToPay = principalAmount + interest;
+        if (isFullRepay) {
+            // Calculate total interest accrued on the loan
+            uint256 interest = _calculateInterest(msg.sender);
+
+            // Protocol fee is taken from the interest
+            protocolFee = _calculateProtocolFee(msg.sender);
+
+            // Total to pay = principal + interest (protocolFee comes from interest)
+            totalToPay += interest;
+        }
 
         // ---- Effects ----
+
+        // Update borrower's repayment status
         info.amountBorrowed -= principalAmount;
         info.amountRepaid += principalAmount;
 
+        // Reset timestamps if the loan is fully repaid
         if (info.amountBorrowed == 0) {
             info.borrowTimestamp = 0;
             info.lastIteration = block.timestamp;
         }
 
         // ---- Interactions ----
+
+        // Transfer funds from borrower to the protocol
         stableToken.safeTransferFrom(msg.sender, address(this), totalToPay);
 
-        // Transferimos la comisión al creador del protocolo
+        // Transfer protocol fee to the fee recipient (if any)
         if (protocolFee > 0) {
             stableToken.safeTransfer(feeRecipient, protocolFee);
         }
