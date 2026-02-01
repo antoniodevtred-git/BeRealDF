@@ -635,7 +635,7 @@ contract ProtocolLenderTest is Test {
         assertEq(info.collateralDeposited, 0);
     }
     
-    function testLiquidate_RevertsIfRepaidLessThan50PercentBetween9And12Months() public {
+    function testLiquidate_SucceedsIfRepaidLessThan50PercentBetween9And12Months() public {
         uint256 collateralAmount = 1000 ether;
         uint256 borrowAmount = 800 ether;
 
@@ -665,18 +665,17 @@ contract ProtocolLenderTest is Test {
         // 6. Protocol charges full interest regardless of repayment %
         uint256 fullInterest = (borrowAmount * 800) / 10_000; // 8%
         uint256 totalToPay = repayAmount + fullInterest;
-
-        // 7. Transfer tokens to borrower and approve total + buffer
         uint256 buffer = 50 ether;
-        stableToken.transfer(borrower, totalToPay + buffer);
 
+        // 7. Transfer tokens to borrower and approve
+        stableToken.transfer(borrower, totalToPay + buffer);
         vm.startPrank(borrower);
         stableToken.approve(address(protocol), totalToPay + buffer);
         protocol.repay(repayAmount);
         vm.stopPrank();
 
-        // 8. Liquidation should revert since less than 50% was repaid
-        stableToken.approve(address(protocol), 1e21); // approve arbitrarily large amount
+        // 8. Liquidation should succeed (loan is liquidable)
+        stableToken.approve(address(protocol), 1e21);
         protocol.liquidate(borrower);
     }
 
