@@ -199,7 +199,6 @@ contract Protocol is Ownable, ReentrancyGuard {
     *      - protocol fee (transferred to the feeRecipient).
     * Emits a {Repaid} event with the amount of principal repaid.
     */
-
     function repay(uint256 principalAmount) external nonReentrant {
         require(principalAmount > 0, "9");
 
@@ -207,50 +206,35 @@ contract Protocol is Ownable, ReentrancyGuard {
         require(info.amountBorrowed > 0, "13");
         require(principalAmount <= info.amountBorrowed, "14");
 
-        uint256 totalToPay = principalAmount;
-        uint256 protocolFee = 0;
+        // Calculate total interest accrued since borrow
+        uint256 fullInterest = _calculateInterest(msg.sender);
 
-        // Determine if the borrower is fully repaying the loan
-        bool isFullRepay = principalAmount == info.amountBorrowed;
-
-        if (isFullRepay) {
-            // Calculate total interest accrued on the loan
-            uint256 interest = _calculateInterest(msg.sender);
-
-            // Protocol fee is taken from the interest
-            protocolFee = _calculateProtocolFee(msg.sender);
-
-            // Total to pay = principal + interest (protocolFee comes from interest)
-            totalToPay += interest;
-        }
+        // Total amount borrower needs to pay in this call
+        uint256 totalToPay = principalAmount + fullInterest;
 
         // ---- Effects ----
-
-        // Update borrower's repayment status
         info.amountBorrowed -= principalAmount;
         info.amountRepaid += principalAmount;
 
-        // Reset timestamps if the loan is fully repaid
-        if (info.amountBorrowed == 0) {
+        bool loanFullyRepaid = info.amountBorrowed == 0;
+
+        // If loan is fully repaid, reset timestamps and update state
+        if (loanFullyRepaid) {
             info.borrowTimestamp = 0;
             info.lastIteration = block.timestamp;
         }
 
         // ---- Interactions ----
-
-        // Transfer funds from borrower to the protocol
         stableToken.safeTransferFrom(msg.sender, address(this), totalToPay);
 
-        // Transfer protocol fee to the fee recipient (if any)
-        if (protocolFee > 0) {
+        // Transfer protocol fee to feeRecipient only if the loan is fully repaid
+        if (loanFullyRepaid && fullInterest > 0) {
+            uint256 protocolFee = (fullInterest * protocolFeeBps) / BASIS_POINTS;
             stableToken.safeTransfer(feeRecipient, protocolFee);
         }
 
         emit Repaid(msg.sender, principalAmount);
     }
-
-
-
     /**
     * @notice Returns the collateral ratio of a borrower's position.
     * @param borrower The address of the borrower.
@@ -435,8 +419,3 @@ contract Protocol is Ownable, ReentrancyGuard {
     }
 
 }
-
-// testLiquidate_RevertsIfRepaidAtLeast50PercentBetween9And12Months
-// testRepay_MakesLoanNoLongerLiquidable
-// testRepay_TransfersFeeToFeeRecipient
-// testRepay_success
