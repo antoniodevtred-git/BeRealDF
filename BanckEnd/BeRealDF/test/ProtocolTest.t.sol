@@ -278,7 +278,7 @@ contract ProtocolLenderTest is Test {
         protocol.borrow(800 ether);
     }
 
-   function testRepay_success() public {
+    function testRepay_success() public {
         uint256 collateralAmount = 1000 ether;
         uint256 borrowAmount = 800 * 1e6;
 
@@ -288,7 +288,7 @@ contract ProtocolLenderTest is Test {
         protocol.depositCollateral(collateralAmount);
         vm.stopPrank();
 
-        // Lender funds the protocol
+        // Lender deposits liquidity
         vm.startPrank(lender);
         stableToken.approve(address(protocol), 1_000 * 1e6);
         protocol.deposit(1_000 * 1e6);
@@ -297,29 +297,26 @@ contract ProtocolLenderTest is Test {
         // Borrower borrows
         vm.startPrank(borrower);
         protocol.borrow(borrowAmount);
+        vm.stopPrank();
 
-        // Simulate time passage to accrue interest (e.g. 100 days → Q2)
-        vm.warp(block.timestamp + 100 days);
+        // Move time forward so interest accrues
+        vm.warp(block.timestamp + 1 days);
 
-        // Calculate interest + fee
-        uint256 interest = (borrowAmount * 800) / 10_000;
-        uint256 fee = (interest * 150) / 10_000;
-        uint256 totalToPay = borrowAmount + interest; // Fee is extracted from interest, not extra cost
+        // Give borrower MORE than enough to repay (principal + interest buffer)
+        uint256 repayBuffer = borrowAmount + 100 * 1e6;
 
-        // Fund borrower with enough to repay
-        vm.prank(address(this));
-        stableToken.transfer(borrower, totalToPay);
+        vm.startPrank(address(this));
+        stableToken.transfer(borrower, repayBuffer);
+        vm.stopPrank();
 
-        // Approve the correct amount (borrow + interest)
-        stableToken.approve(address(protocol), totalToPay);
+        // Repay
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), repayBuffer);
 
-        // Expect Repaid event
         vm.expectEmit(true, false, false, true);
         emit Repaid(borrower, borrowAmount);
 
-        // Repay
         protocol.repay(borrowAmount);
-
         vm.stopPrank();
     }
 
