@@ -805,6 +805,51 @@ contract ProtocolLenderTest is Test {
         vm.stopPrank();
     }
 
+    function testRepay_PartialRepayDoesNotChargeProtocolFee() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        // 1. Borrower deposits collateral
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        // 2. Lender provides liquidity
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), borrowAmount);
+        protocol.deposit(borrowAmount);
+        vm.stopPrank();
+
+        // 3. Borrower borrows
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // 4. Move time forward (Q3/Q4 → 13% interest)
+        vm.warp(block.timestamp + 300 days);
+
+        // 5. Partial repay (50% of principal)
+        uint256 repayAmount = 400 ether;
+
+        // IMPORTANT: interest is calculated on FULL borrowed amount
+        uint256 interest = (borrowAmount * 1300) / 10_000; // 13%
+        uint256 totalToPay = repayAmount + interest;
+
+        // Fund borrower and approve exact amount
+        stableToken.transfer(borrower, totalToPay);
+
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), totalToPay);
+        protocol.repay(repayAmount);
+        vm.stopPrank();
+
+        // 6. Protocol fee must NOT be charged on partial repay
+        uint256 feeBalance = stableToken.balanceOf(feeRecipient);
+        assertEq(feeBalagit nce, 0, "Protocol fee should not be charged on partial repay");
+    }
+
+
 
 
 
