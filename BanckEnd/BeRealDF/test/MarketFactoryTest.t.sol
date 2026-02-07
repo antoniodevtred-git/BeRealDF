@@ -13,6 +13,8 @@ contract MarketFactoryTest is Test {
     MockToken collateralToken;
 
     address user = address(0x123);
+    address feeRecipient = address(0xFEE);
+
     uint256 initialSupply = 1_000_000 ether;
 
     function setUp() public {
@@ -21,7 +23,7 @@ contract MarketFactoryTest is Test {
         collateralToken = new MockToken("Collateral", "WETH", 18, initialSupply);
 
         // Deploy factory
-        factory = new MarketFactory();
+        factory = new MarketFactory(feeRecipient);
     }
 
     function testCreateMarket() public {

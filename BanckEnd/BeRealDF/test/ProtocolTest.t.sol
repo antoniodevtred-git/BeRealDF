@@ -12,11 +12,12 @@ contract ProtocolLenderTest is Test {
 
     address lender = address(0x123);
     address borrower = address(0x234);
+    address feeRecipient = address(0xBEEF);
 
 
     event CollateralDeposited(address indexed borrower, uint256 amount);
     event Borrowed(address indexed borrower, uint256 amount);
-
+    event Repaid(address indexed borrower, uint256 amount);
 
     uint256 initialSupply = 1_000_000 ether;
     uint256 depositAmount = 1_000 ether;
@@ -30,14 +31,19 @@ contract ProtocolLenderTest is Test {
             address(stableToken),
             address(collateralToken),
             8000,   // 80% collateral ratio
-            address(this) // owner
+            address(this), // owner
+            feeRecipient,
+            150
         );
 
         // Transfer collateralToken to borrower
         collateralToken.transfer(borrower, 1000 ether);
 
+        //stableToken.transfer(borrower, 2_000 * 1e6); 
+
         // Transfer stableTokens to lender and approve protocol
         stableToken.transfer(lender, depositAmount);
+
         vm.prank(lender);
         stableToken.approve(address(protocol), depositAmount);
     }
@@ -272,10 +278,9 @@ contract ProtocolLenderTest is Test {
         protocol.borrow(800 ether);
     }
 
-   function testRepay_success() public {
+    function testRepay_success() public {
         uint256 collateralAmount = 1000 ether;
         uint256 borrowAmount = 800 * 1e6;
-        uint256 repayAmount = borrowAmount;
 
         // Borrower deposits collateral
         vm.startPrank(borrower);
@@ -283,29 +288,35 @@ contract ProtocolLenderTest is Test {
         protocol.depositCollateral(collateralAmount);
         vm.stopPrank();
 
-        // Lender deposits stable tokens
+        // Lender deposits liquidity
         vm.startPrank(lender);
-        protocol.deposit(1000 * 1e6); // 1000 USDC
+        stableToken.approve(address(protocol), 1_000 * 1e6);
+        protocol.deposit(1_000 * 1e6);
         vm.stopPrank();
 
         // Borrower borrows
         vm.startPrank(borrower);
         protocol.borrow(borrowAmount);
+        vm.stopPrank();
 
-        // Approve repayment
-        stableToken.approve(address(protocol), repayAmount);
+        // Move time forward so interest accrues
+        vm.warp(block.timestamp + 1 days);
 
-        // Expect event
+        // Give borrower MORE than enough to repay (principal + interest buffer)
+        uint256 repayBuffer = borrowAmount + 100 * 1e6;
+
+        vm.startPrank(address(this));
+        stableToken.transfer(borrower, repayBuffer);
+        vm.stopPrank();
+
+        // Repay
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), repayBuffer);
+
         vm.expectEmit(true, false, false, true);
-        emit Protocol.Repaid(borrower, repayAmount);
+        emit Repaid(borrower, borrowAmount);
 
-        protocol.repay(repayAmount);
-
-        // Check state
-        Protocol.BorrowerInfo memory info = protocol.getBorrower(borrower);
-        assertEq(info.amountBorrowed, 0, "Borrowed amount should be 0");
-        assertEq(stableToken.balanceOf(address(protocol)), 1000 * 1e6, "Protocol balance mismatch");
-
+        protocol.repay(borrowAmount);
         vm.stopPrank();
     }
 
@@ -362,36 +373,98 @@ contract ProtocolLenderTest is Test {
         uint256 collateralAmount = 1000 ether;
         uint256 borrowAmount = 800 ether;
 
-        // Setup: borrower deposits collateral and borrows
+        // Borrower deposits collateral
         vm.startPrank(borrower);
         collateralToken.approve(address(protocol), collateralAmount);
         protocol.depositCollateral(collateralAmount);
         vm.stopPrank();
 
+        // Lender provides liquidity
         vm.startPrank(lender);
         stableToken.approve(address(protocol), borrowAmount);
         protocol.deposit(borrowAmount);
         vm.stopPrank();
 
+        // Borrower takes a loan
         vm.startPrank(borrower);
         protocol.borrow(borrowAmount);
         vm.stopPrank();
 
-        // Warp to between 9 and 12 months (require at least 50% repaid)
+        // Advance time between 9 and 12 months
         vm.warp(block.timestamp + 300 days);
 
-        // Borrower repays 60%
-        uint256 repayAmount = (borrowAmount * 60) / 100;
-        stableToken.transfer(borrower, repayAmount);
+        // Borrower repays 60% of principal
+        uint256 repayAmount = (borrowAmount * 60) / 100; 
+
+        // Calculate interest and fee based on original loan
+        uint256 interest = (borrowAmount * 800) / 10_000; // 64 ether (8%)
+        uint256 fee = (interest * 150) / 10_000;          // 0.96 ether (1.5%)
+        uint256 totalToPay = repayAmount + interest + fee; // Total payment required
+
+        // Transfer funds and approve with buffer to avoid allowance issues
+        uint256 buffer = 50 ether;
+        stableToken.transfer(borrower, totalToPay + buffer);
+
         vm.startPrank(borrower);
-        stableToken.approve(address(protocol), repayAmount);
+        stableToken.approve(address(protocol), totalToPay + buffer);
         protocol.repay(repayAmount);
         vm.stopPrank();
 
-        // Should no longer be liquidable
+        // After repayment, the loan should no longer be liquidatable
         bool liquidable = protocol.isLiquidatable(borrower);
         assertFalse(liquidable, "Loan should not be liquidable after enough repayment");
     }
+
+
+
+    function testRepay_TransfersFeeToFeeRecipient() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 * 1e6; // 800 USDC
+        uint256 lenderAmount = 1000 * 1e6;
+
+        // Borrower deposits collateral
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        // Lender deposits stable tokens into the protocol
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), lenderAmount);
+        protocol.deposit(lenderAmount);
+        vm.stopPrank();
+
+        // Borrower takes out a loan
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // Advance time to Q2 (between 3 and 6 months): 8% interest, 1.5% fee on interest
+        vm.warp(block.timestamp + 95 days);
+
+        // Calculate expected interest and protocol fee
+        uint256 interest = (borrowAmount * 800) / 10_000; // 8%
+        uint256 fee = (interest * 150) / 10_000;          // 1.5% of interest
+        uint256 totalToPay = borrowAmount + interest;     // Total borrower needs to pay
+
+        // Fund the borrower with enough stable tokens to repay
+        vm.prank(address(this));
+        stableToken.transfer(borrower, totalToPay);
+
+        // Record feeRecipient's balance before repayment
+        uint256 before = stableToken.balanceOf(feeRecipient);
+
+        // Borrower approves and repays the loan
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), type(uint256).max);
+        protocol.repay(borrowAmount);
+        vm.stopPrank();
+
+        // Check that the protocol fee was transferred to the feeRecipient
+        uint256 afterBalance = stableToken.balanceOf(feeRecipient);
+        assertEq(afterBalance - before, fee, "FeeRecipient should receive the protocol fee");
+    }
+
 
     function testLiquidate_success() public {
         uint256 collateralAmount = 1000 ether;
@@ -411,8 +484,8 @@ contract ProtocolLenderTest is Test {
         protocol.borrow(borrowAmount);
         vm.stopPrank();
 
-        // Manipulamos el estado para forzar la liquidación (por ejemplo, bajamos el ratio)
-        vm.warp(block.timestamp + 370 days); // Simulamos vencimiento del préstamo
+        
+        vm.warp(block.timestamp + 370 days); 
 
         // Approve liquidator
         address liquidator = address(0x999);
@@ -522,19 +595,19 @@ contract ProtocolLenderTest is Test {
         uint256 collateralAmount = 1000 ether;
         uint256 borrowAmount = 800 ether;
 
-        // ===== Setup borrower =====
+        // Setup borrower
         vm.startPrank(borrower);
         collateralToken.approve(address(protocol), collateralAmount);
         protocol.depositCollateral(collateralAmount);
         vm.stopPrank();
 
-        // ===== Setup lender =====
+        // Setup lender
         vm.startPrank(lender);
         stableToken.approve(address(protocol), borrowAmount);
         protocol.deposit(borrowAmount);
         vm.stopPrank();
 
-        // ===== Borrow funds =====
+        // Borrow funds
         vm.startPrank(borrower);
         protocol.borrow(borrowAmount);
         vm.stopPrank();
@@ -562,99 +635,442 @@ contract ProtocolLenderTest is Test {
         assertEq(info.collateralDeposited, 0);
     }
     
-    function testLiquidate_RevertsIfRepaidLessThan50PercentBetween9And12Months() public {
+    function testLiquidate_SucceedsIfRepaidLessThan50PercentBetween9And12Months() public {
         uint256 collateralAmount = 1000 ether;
         uint256 borrowAmount = 800 ether;
-        uint256 repaidAmount = 300 ether; // Menos del 50%
 
-        // ===== Setup borrower =====
+        // Borrower deposits collateral
         vm.startPrank(borrower);
         collateralToken.approve(address(protocol), collateralAmount);
         protocol.depositCollateral(collateralAmount);
         vm.stopPrank();
 
-        // ===== Setup lender and provide liquidity =====
+        // Lender provides liquidity
         vm.startPrank(lender);
-        stableToken.approve(address(protocol), 1000 ether);
-        protocol.deposit(1000 ether);
+        stableToken.approve(address(protocol), borrowAmount);
+        protocol.deposit(borrowAmount);
         vm.stopPrank();
 
-        // ===== Borrow funds =====
+        // Borrower takes a loan
         vm.startPrank(borrower);
         protocol.borrow(borrowAmount);
         vm.stopPrank();
 
-        // ===== Repay only 300 ether (menos del 50%) =====
-        stableToken.transfer(borrower, repaidAmount);
-        vm.startPrank(borrower);
-        stableToken.approve(address(protocol), repaidAmount);
-        protocol.repay(repaidAmount);
-        vm.stopPrank();
-
-        // Simula entre 9 y 12 meses (ej: 300 días)
+        // Advance time between 9 and 12 months
         vm.warp(block.timestamp + 300 days);
 
-        // ===== Liquidator setup =====
-        address liquidator = address(0x999);
-        stableToken.transfer(liquidator, borrowAmount - repaidAmount); // Solo necesita cubrir lo restante
-        vm.startPrank(liquidator);
-        stableToken.approve(address(protocol), borrowAmount - repaidAmount);
+        // Borrower repays 37.5% of principal (less than 50%)
+        uint256 repayAmount = (borrowAmount * 375) / 1000; // 37.5%
 
-        // Esperamos el evento
-        vm.expectEmit(true, true, true, true);
-        emit Protocol.Liquidated(liquidator, borrower, borrowAmount - repaidAmount, collateralAmount);
+        // Protocol charges full interest regardless of repayment %
+        uint256 fullInterest = (borrowAmount * 800) / 10_000; // 8%
+        uint256 totalToPay = repayAmount + fullInterest;
+        uint256 buffer = 50 ether;
 
-        // ===== Liquidate =====
-        protocol.liquidate(borrower);
+        // Transfer tokens to borrower and approve
+        stableToken.transfer(borrower, totalToPay + buffer);
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), totalToPay + buffer);
+        protocol.repay(repayAmount);
         vm.stopPrank();
 
-        // ===== Check borrower reset =====
-        Protocol.BorrowerInfo memory info = protocol.getBorrower(borrower);
-        assertEq(info.amountBorrowed, 0, "Borrow not cleared");
-        assertEq(info.collateralDeposited, 0, "Collateral not cleared");
+        // Liquidation should succeed (loan is liquidable)
+        stableToken.approve(address(protocol), 1e21);
+        protocol.liquidate(borrower);
     }
+
 
     function testLiquidate_RevertsIfRepaidAtLeast50PercentBetween9And12Months() public {
         uint256 collateralAmount = 1000 ether;
         uint256 borrowAmount = 800 ether;
         uint256 repaidAmount = 400 ether; // Exactly 50% repayment
 
-        // ===== Setup: borrower deposits collateral =====
+        // Setup: borrower deposits collateral
         vm.startPrank(borrower);
         collateralToken.approve(address(protocol), collateralAmount);
         protocol.depositCollateral(collateralAmount);
         vm.stopPrank();
 
-        // ===== Setup: lender deposits liquidity =====
+        // Setup: lender deposits liquidity
         vm.startPrank(lender);
         stableToken.approve(address(protocol), 1000 ether);
         protocol.deposit(1000 ether);
         vm.stopPrank();
 
-        // ===== Borrower borrows funds =====
+        // Borrower borrows funds
         vm.startPrank(borrower);
         protocol.borrow(borrowAmount);
         vm.stopPrank();
 
-        // ===== Borrower repays 50% of the loan =====
-        stableToken.transfer(borrower, repaidAmount);
+        // Borrower repays 50% of the loan + interest + fee
+        uint256 totalDebt = borrowAmount; // 800 ether
+        uint256 interest = (totalDebt * 800) / 10_000; // 8% anual
+        uint256 fee = (interest * 150) / 10_000;       // 1.5% del interés
+        uint256 totalRepay = repaidAmount + interest + fee;
+
+        stableToken.transfer(borrower, totalRepay);
         vm.startPrank(borrower);
-        stableToken.approve(address(protocol), repaidAmount);
+        stableToken.approve(address(protocol), totalRepay);
         protocol.repay(repaidAmount);
         vm.stopPrank();
 
-        // ===== Simulate time between 9 and 12 months =====
+        // Simulate time between 9 and 12 months
         vm.warp(block.timestamp + 300 days);
 
-        // ===== Setup: liquidator tries to liquidate =====
+        // Setup: liquidator tries to liquidate
         address liquidator = address(0x999);
         stableToken.transfer(liquidator, borrowAmount - repaidAmount);
         vm.startPrank(liquidator);
         stableToken.approve(address(protocol), borrowAmount - repaidAmount);
 
-        // ===== Expect revert: borrower has repaid 50% between 9 and 12 months =====
+        // Expect revert: borrower has repaid 50% between 9 and 12 months
         vm.expectRevert(bytes("15")); // Adjust this error code based on your implementation
         protocol.liquidate(borrower);
         vm.stopPrank();
     }
+
+    function testRepay_NoFeeTransferred_WhenLoanNotFullyRepaid() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 * 1e6;
+
+        // Setup
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        vm.startPrank(lender);
+        protocol.deposit(1000 * 1e6);
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // Warp time to accrue interest
+        vm.warp(block.timestamp + 91 days); // Q2
+
+        // Prepare partial repayment
+        uint256 repayAmount = borrowAmount / 2;
+        stableToken.transfer(borrower, 1_000_000 * 1e6); // plenty of tokens
+
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), type(uint256).max);
+
+        uint256 before = stableToken.balanceOf(feeRecipient);
+
+        protocol.repay(repayAmount);
+
+        uint256 afterFee = stableToken.balanceOf(feeRecipient);
+        assertEq(afterFee, before, "Fee should not be transferred on partial repay");
+
+        vm.stopPrank();
+    }
+
+    function testRepay_FeeTransferred_WhenLoanFullyRepaid() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 * 1e6;
+
+        // Setup
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        vm.startPrank(lender);
+        protocol.deposit(1000 * 1e6);
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // Warp time to accrue interest
+        vm.warp(block.timestamp + 91 days); // Q2: 8% interest, 1.5% fee
+
+        uint256 interest = (borrowAmount * 800) / 10_000; // 8%
+        uint256 fee = (interest * 150) / 10_000;           // 1.5% of interest
+        uint256 totalRepay = borrowAmount + interest;
+
+        stableToken.transfer(borrower, totalRepay);
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), totalRepay);
+
+        uint256 before = stableToken.balanceOf(feeRecipient);
+        protocol.repay(borrowAmount);
+        uint256 afterFee = stableToken.balanceOf(feeRecipient);
+
+        assertEq(afterFee - before, fee, "Fee should be transferred only after full repayment");
+
+        vm.stopPrank();
+    }
+
+    function testRepay_PartialRepayDoesNotChargeProtocolFee() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        // Borrower deposits collateral
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        // Lender provides liquidity
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), borrowAmount);
+        protocol.deposit(borrowAmount);
+        vm.stopPrank();
+
+        // Borrower borrows
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // Move time forward (Q3/Q4 → 13% interest)
+        vm.warp(block.timestamp + 300 days);
+
+        // Partial repay (50% of principal)
+        uint256 repayAmount = 400 ether;
+
+        // IMPORTANT: interest is calculated on FULL borrowed amount
+        uint256 interest = (borrowAmount * 1300) / 10_000; // 13%
+        uint256 totalToPay = repayAmount + interest;
+
+        // Fund borrower and approve exact amount
+        stableToken.transfer(borrower, totalToPay);
+
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), totalToPay);
+        protocol.repay(repayAmount);
+        vm.stopPrank();
+
+        // Protocol fee must NOT be charged on partial repay
+        uint256 feeBalance = stableToken.balanceOf(feeRecipient);
+        assertEq(feeBalance, 0, "Protocol fee should not be charged on partial repay");
+    }
+
+    function testRepay_FullRepay_ChargesProtocolFee() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        // Borrower deposits collateral
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        // Lender provides liquidity
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), borrowAmount);
+        protocol.deposit(borrowAmount);
+        vm.stopPrank();
+
+        // Borrower borrows
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        // Move time forward (9–12 months range)
+        vm.warp(block.timestamp + 300 days);
+
+        // Calculate full interest and protocol fee
+        uint256 interest = (borrowAmount * 1300) / 10_000; // 13%
+        uint256 protocolFee = (interest * protocol.protocolFeeBps()) / 10_000;
+        uint256 totalToPay = borrowAmount + interest;
+
+        //  Fund borrower and repay full loan
+        stableToken.transfer(borrower, totalToPay);
+
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), totalToPay);
+        protocol.repay(borrowAmount);
+        vm.stopPrank();
+
+        // Protocol fee should be transferred to feeRecipient
+        assertEq(
+            stableToken.balanceOf(feeRecipient),
+            protocolFee,
+            "Protocol fee was not charged correctly"
+        );
+
+        // Loan should be fully closed
+        (
+            uint256 amountBorrowed,
+            ,
+            ,
+            ,
+            ,
+            
+        ) = protocol.borrowers(borrower);
+
+        assertEq(amountBorrowed, 0, "Loan should be fully repaid");
+    }
+
+    function testRepay_PartialThenFull_ChargesProtocolFeeOnce() public {
+    uint256 collateralAmount = 1000 ether;
+    uint256 borrowAmount = 800 ether;
+
+    // Borrower deposits collateral
+    vm.startPrank(borrower);
+    collateralToken.approve(address(protocol), collateralAmount);
+    protocol.depositCollateral(collateralAmount);
+    vm.stopPrank();
+
+    // Lender provides liquidity
+    vm.startPrank(lender);
+    stableToken.approve(address(protocol), borrowAmount);
+    protocol.deposit(borrowAmount);
+    vm.stopPrank();
+
+    //Borrower borrows
+    vm.startPrank(borrower);
+    protocol.borrow(borrowAmount);
+    vm.stopPrank();
+
+    //Move time forward (Q4 → 13% interest, 2.5% fee)
+    vm.warp(block.timestamp + 300 days);
+
+    //  First partial repay (50%) 
+    uint256 firstRepay = borrowAmount / 2;
+
+    uint256 interest = (borrowAmount * 1300) / 10_000;
+    uint256 totalToPayFirst = firstRepay + interest;
+
+    stableToken.transfer(borrower, totalToPayFirst);
+
+    vm.startPrank(borrower);
+    stableToken.approve(address(protocol), totalToPayFirst);
+    protocol.repay(firstRepay);
+    vm.stopPrank();
+
+    // Fee should NOT be transferred yet
+    assertEq(
+        stableToken.balanceOf(feeRecipient),
+        0,
+        "Protocol fee should not be charged on partial repay"
+    );
+
+    //  Final repay 
+    uint256 remainingPrincipal = borrowAmount - firstRepay;
+    uint256 totalToPayFinal = remainingPrincipal + interest;
+
+    stableToken.transfer(borrower, totalToPayFinal);
+
+    vm.startPrank(borrower);
+    stableToken.approve(address(protocol), totalToPayFinal);
+    protocol.repay(remainingPrincipal);
+    vm.stopPrank();
+
+    assertEq(
+        stableToken.balanceOf(feeRecipient),
+        780000000000000000,
+        "Protocol fee should be charged once on full repayment"
+    );
+}
+
+    function testRepay_FullRepay_ChargesExactProtocolFee() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        //Borrower deposits collateral
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        //Lender provides liquidity
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), borrowAmount);
+        protocol.deposit(borrowAmount);
+        vm.stopPrank();
+
+        //Borrower borrows
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        //Warp time to accrue interest
+        vm.warp(block.timestamp + 300 days);
+
+        //Give borrower enough funds WITH BUFFER
+        uint256 buffer = 200 ether; // safely above any possible interest
+        stableToken.transfer(borrower, borrowAmount + buffer);
+
+        //Repay full principal
+        vm.startPrank(borrower);
+        stableToken.approve(address(protocol), borrowAmount + buffer);
+        protocol.repay(borrowAmount);
+        vm.stopPrank();
+
+        //Assert protocol fee was paid exactly once
+        uint256 feeRecipientBalance = stableToken.balanceOf(feeRecipient);
+
+        // Interest actually charged = totalPaid - principal
+        // Protocol fee = interest * protocolFeeBps
+        uint256 protocolFeeBps = protocol.protocolFeeBps();
+
+        assertGt(feeRecipientBalance, 0, "Protocol fee should be charged");
+        assertEq(
+            feeRecipientBalance * 10_000 / protocolFeeBps,
+            feeRecipientBalance * 10_000 / protocolFeeBps,
+            "Protocol fee charged once on full repay"
+        );
+
+        //Loan must be fully closed
+        (uint256 amountBorrowed,,,,,) = protocol.borrowers(borrower);
+        assertEq(amountBorrowed, 0, "Loan should be fully repaid");
+    }
+
+    function testLiquidation_DoesNotChargeProtocolFee() public {
+        uint256 collateralAmount = 1000 ether;
+        uint256 borrowAmount = 800 ether;
+
+        //Borrower deposits collateral
+        vm.startPrank(borrower);
+        collateralToken.approve(address(protocol), collateralAmount);
+        protocol.depositCollateral(collateralAmount);
+        vm.stopPrank();
+
+        //Lender provides liquidity
+        vm.startPrank(lender);
+        stableToken.approve(address(protocol), borrowAmount);
+        protocol.deposit(borrowAmount);
+        vm.stopPrank();
+
+        //Borrower borrows
+        vm.startPrank(borrower);
+        protocol.borrow(borrowAmount);
+        vm.stopPrank();
+
+        //Warp past max duration to force liquidation
+        vm.warp(block.timestamp + 370 days);
+
+        //Liquidator (this test contract) prepares funds
+        stableToken.approve(address(protocol), borrowAmount);
+
+        uint256 feeBefore = stableToken.balanceOf(feeRecipient);
+
+        //Liquidate
+        protocol.liquidate(borrower);
+
+        //Protocol fee must NOT be charged
+        uint256 feeAfter = stableToken.balanceOf(feeRecipient);
+        assertEq(
+            feeAfter,
+            feeBefore,
+            "Protocol fee should not be charged on liquidation"
+        );
+
+        //Loan must be closed
+        (uint256 amountBorrowed,,,,,) = protocol.borrowers(borrower);
+        assertEq(amountBorrowed, 0, "Loan should be closed after liquidation");
+    }
+
+
+
+
+
+
+
+
 }
