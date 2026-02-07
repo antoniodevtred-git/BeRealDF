@@ -1,3 +1,4 @@
 1-Stable token is zero
 2-Collateral token is zero
 3-Tokens must be different
+4-Invalid feeRecipient
