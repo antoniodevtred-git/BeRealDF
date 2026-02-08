@@ -8,6 +8,13 @@ import "./Protocol.sol";
  * @notice Factory contract to deploy new lending protocol markets (Protocol instances)
  */
 contract MarketFactory {
+
+    address public immutable feeRecipient;
+
+    constructor(address _feeRecipient) {
+        require(_feeRecipient != address(0), "4");
+        feeRecipient = _feeRecipient;
+    }
     /// @notice Struct to store market metadata
     struct MarketInfo {
         address protocol;
@@ -49,7 +56,9 @@ contract MarketFactory {
             _stableToken,
             _collateralToken,
             _collateralRatio,
-            msg.sender // Pass the caller as owner
+            msg.sender, // Pass the caller as owner
+            feeRecipient, //feeRecipient
+            150
         );
 
         // Store market metadata
