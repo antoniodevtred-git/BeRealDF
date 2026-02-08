@@ -1,13 +1,11 @@
-import { createConfig, http } from "wagmi";
-import { mainnet, sepolia } from "wagmi/chains";
+import { http, createConfig } from "wagmi";
+import { anvil } from "wagmi/chains";
 import { injected } from "wagmi/connectors";
 
 export const config = createConfig({
-  chains: [sepolia], // o mainnet luego
-  connectors: [
-    injected(), // MetaMask, Brave, etc
-  ],
+  chains: [anvil],
+  connectors: [injected()],
   transports: {
-    [sepolia.id]: http(),
+    [anvil.id]: http("http://127.0.0.1:8545"),
   },
 });
