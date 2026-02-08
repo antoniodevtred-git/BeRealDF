@@ -104,16 +104,20 @@ contract Protocol is Ownable, ReentrancyGuard {
     function withdraw(uint256 amount) external nonReentrant {
         // ✅ Checks
         require(amount > 0, "6");
+        LenderInfo storage lender = lenders[msg.sender];
+
         require(lenders[msg.sender].amountSupplied >= amount, "7");
 
         // ✅ Effects
-        lenders[msg.sender].amountSupplied -= amount;
-        totalSupplied -= amount;
+        lender.amountSupplied -= amount;
+
 
         // ✅ Interactions
         stableToken.safeTransfer(msg.sender, amount);
 
         emit Withdrawn(msg.sender, amount);
+        // NOTE: Lenders do not receive interest in the current protocol model.
+        // Interest is retained by the protocol (minus protocol fee).
     }
 
     /**
