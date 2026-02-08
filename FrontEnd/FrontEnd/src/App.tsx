@@ -1,10 +1,16 @@
-import Layout from "./components/Layout"
-import Home from "./pages/Home"
+import Header from "./components/Header"
+import LenderCard from "./components/LenderCard"
 
 export default function App() {
   return (
-    <Layout>
-      <Home />
-    </Layout>
+    <div className="min-h-screen bg-background text-white">
+      {/* Header */}
+      <Header />
+
+      {/* Main content */}
+      <main className="flex justify-center px-6 py-16">
+        <LenderCard />
+      </main>
+    </div>
   )
 }

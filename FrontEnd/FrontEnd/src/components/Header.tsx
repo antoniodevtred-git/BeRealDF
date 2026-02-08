@@ -1,10 +1,8 @@
-import { useAccount, useConnect, useDisconnect } from "wagmi"
-import { injected } from "wagmi/connectors"
+import { useAccount } from "wagmi"
+import { ConnectWallet } from "./WalletButton"
 
 export default function Header() {
   const { address, isConnected } = useAccount()
-  const { connect, isPending } = useConnect()
-  const { disconnect } = useDisconnect()
 
   return (
     <header className="w-full border-b border-white/10 backdrop-blur">
@@ -13,29 +11,14 @@ export default function Header() {
           BeReal DeFi
         </h1>
 
-        <div className="text-sm">
-          {isConnected ? (
-            <div className="flex items-center gap-3">
-              <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400">
-                {address?.slice(0, 6)}...{address?.slice(-4)}
-              </span>
-
-              <button
-                onClick={() => disconnect()}
-                className="text-gray-400 hover:text-white transition"
-              >
-                Disconnect
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => connect({ connector: injected() })}
-              disabled={isPending}
-              className="px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition"
-            >
-              {isPending ? "Connecting..." : "Connect wallet"}
-            </button>
+        <div className="flex items-center gap-4">
+          {isConnected && (
+            <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-sm">
+              {address?.slice(0, 6)}...{address?.slice(-4)}
+            </span>
           )}
+
+          <ConnectWallet />
         </div>
       </div>
     </header>
