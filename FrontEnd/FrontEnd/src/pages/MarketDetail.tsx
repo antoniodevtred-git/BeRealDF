@@ -1,20 +1,38 @@
-import { useParams } from "react-router-dom"
+import { useParams } from "react-router-dom";
+import { useReadContract } from "wagmi";
+import { protocolAbi } from "@/contracts";
 
 export default function MarketDetail() {
-  const { address } = useParams()
+  const { address } = useParams();
+
+  const { data: stableToken } = useReadContract({
+    address: address as `0x${string}`,
+    abi: protocolAbi,
+    functionName: "stableToken",
+  });
+
+  const { data: collateralToken } = useReadContract({
+    address: address as `0x${string}`,
+    abi: protocolAbi,
+    functionName: "collateralToken",
+  });
+
+  const { data: collateralRatio } = useReadContract({
+    address: address as `0x${string}`,
+    abi: protocolAbi,
+    functionName: "collateralRatio",
+  });
 
   return (
     <div className="max-w-4xl mx-auto p-6 text-white">
-      <h2 className="text-2xl font-semibold mb-4">
-        Market Detail
-      </h2>
+      <h1 className="text-2xl mb-6">Market Detail</h1>
 
-      <div className="bg-white/5 p-6 rounded-xl space-y-3">
+      <div className="space-y-3 text-sm">
         <p><strong>Protocol Address:</strong> {address}</p>
-        <p>Stable Token: ...</p>
-        <p>Collateral Token: ...</p>
-        <p>Collateral Ratio: ...</p>
+        <p><strong>Stable Token:</strong> {stableToken as string}</p>
+        <p><strong>Collateral Token:</strong> {collateralToken as string}</p>
+        <p><strong>Collateral Ratio:</strong> {collateralRatio?.toString()}</p>
       </div>
     </div>
-  )
+  );
 }
