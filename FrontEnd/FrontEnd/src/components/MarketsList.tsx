@@ -23,14 +23,14 @@ export function MarketsList() {
           key={index}
           className="rounded-xl border border-white/10 p-4 bg-white/5"
         >
-          <p className="text-sm text-gray-400">Protocol</p>
+          <p className="text-sm text-gray-400">Lending Market:</p>
           <p className="font-mono text-sm">{market.protocol}</p>
 
-          <p className="mt-2 text-sm text-gray-400">Stable token: </p>
+          <p className="mt-2 text-sm text-gray-400">Borrow Token: </p>
           <p className="font-mono text-sm">{market.stableToken}</p>
           
 
-          <p className="mt-2 text-sm text-gray-400">Collateral token: </p>
+          <p className="mt-2 text-sm text-gray-400">Collateral Token: </p>
           <p className="font-mono text-sm">{market.collateralToken}</p>
 
           <p className="mt-2 text-sm text-gray-400">
