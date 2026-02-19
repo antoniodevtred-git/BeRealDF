@@ -92,6 +92,13 @@ export default function BorrowCard({ protocolAddress }: Props) {
         });
     };
 
+    const healthFactor =
+        debt && Number(debt) > 0
+            ? (Number(collateralBalance) * Number(collateralRatio)) /
+            (Number(debt) * 10000)
+            : 0;
+
+
     // ----------------------------
     // UI
     // ----------------------------
@@ -108,6 +115,39 @@ export default function BorrowCard({ protocolAddress }: Props) {
                     <p className="text-white font-medium">
                         {Number(collateralBalance) / 1e18}
                     </p>
+                </div>
+
+                <div>
+                    <p className="text-sm text-gray-400">Health Factor</p>
+                    <p
+                        className={`font-medium ${debt && Number(debt) > 0
+                                ? healthFactor > 1.5
+                                    ? "text-green-400"
+                                    : healthFactor > 1
+                                        ? "text-yellow-400"
+                                        : "text-red-500"
+                                : "text-green-400"
+                            }`}
+                    >
+                        {debt && Number(debt) > 0
+                            ? healthFactor.toFixed(2)
+                            : "∞"}
+                    </p>
+                </div>
+
+                <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden mt-2">
+                    <div
+                        className={`h-full ${
+                        healthFactor > 1.5
+                            ? "bg-green-500"
+                            : healthFactor > 1
+                            ? "bg-yellow-500"
+                            : "bg-red-500"
+                        }`}
+                        style={{
+                        width: `${Math.min(healthFactor * 50, 100)}%`,
+                        }}
+                    />
                 </div>
 
                 <div>
