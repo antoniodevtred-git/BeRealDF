@@ -40,6 +40,8 @@ export default function BorrowCard({ protocolAddress }: Props) {
         functionName: "collateralRatio",
     });
 
+    const ratio = collateralRatio ? Number(collateralRatio) : 0;
+
     const collateralBalance =
         borrowerData ? (borrowerData as any).collateralDeposited : 0n;
 
@@ -54,6 +56,33 @@ export default function BorrowCard({ protocolAddress }: Props) {
     const borrowTooHigh =
         !!borrowAmount &&
         Number(borrowAmount) > maxBorrow / 1e18;
+
+    const healthFactor =
+        debt && Number(debt) > 0
+            ? (Number(collateralBalance) * Number(collateralRatio)) /
+            (Number(debt) * 10000)
+            : 0;
+
+    const simulatedDebt =
+        borrowAmount && Number(borrowAmount) > 0
+            ? Number(debt) + Number(parseUnits(borrowAmount || "0", 18))
+            : Number(debt);
+
+    const simulatedHealthFactor =
+        simulatedDebt > 0
+            ? (Number(collateralBalance) * ratio) /
+            (simulatedDebt * 10000)
+            : 0;
+
+    const borrowDisabled =
+        borrowTooHigh ||
+        simulatedHealthFactor < 1;
+
+    const maxDebtBeforeLiquidation =
+        (Number(collateralBalance) * ratio) / 10000;
+
+    const liquidationBuffer =
+        maxDebtBeforeLiquidation - Number(debt);
 
     // ----------------------------
     // Actions
@@ -92,13 +121,6 @@ export default function BorrowCard({ protocolAddress }: Props) {
         });
     };
 
-    const healthFactor =
-        debt && Number(debt) > 0
-            ? (Number(collateralBalance) * Number(collateralRatio)) /
-            (Number(debt) * 10000)
-            : 0;
-
-
     // ----------------------------
     // UI
     // ----------------------------
@@ -121,12 +143,12 @@ export default function BorrowCard({ protocolAddress }: Props) {
                     <p className="text-sm text-gray-400">Health Factor</p>
                     <p
                         className={`font-medium ${debt && Number(debt) > 0
-                                ? healthFactor > 1.5
-                                    ? "text-green-400"
-                                    : healthFactor > 1
-                                        ? "text-yellow-400"
-                                        : "text-red-500"
-                                : "text-green-400"
+                            ? healthFactor > 1.5
+                                ? "text-green-400"
+                                : healthFactor > 1
+                                    ? "text-yellow-400"
+                                    : "text-red-500"
+                            : "text-green-400"
                             }`}
                     >
                         {debt && Number(debt) > 0
@@ -135,17 +157,25 @@ export default function BorrowCard({ protocolAddress }: Props) {
                     </p>
                 </div>
 
+                <div>
+                    <p className="text-sm text-gray-400">Liquidation Buffer</p>
+                    <p className="text-white font-medium">
+                        {liquidationBuffer > 0
+                            ? (liquidationBuffer / 1e18).toFixed(4)
+                            : "0"}
+                    </p>
+                </div>
+
                 <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden mt-2">
                     <div
-                        className={`h-full ${
-                        healthFactor > 1.5
-                            ? "bg-green-500"
-                            : healthFactor > 1
-                            ? "bg-yellow-500"
-                            : "bg-red-500"
-                        }`}
+                        className={`h-full ${healthFactor > 1.5
+                                ? "bg-green-500"
+                                : healthFactor > 1
+                                    ? "bg-yellow-500"
+                                    : "bg-red-500"
+                            }`}
                         style={{
-                        width: `${Math.min(healthFactor * 50, 100)}%`,
+                            width: `${Math.min(healthFactor * 50, 100)}%`,
                         }}
                     />
                 </div>
@@ -192,6 +222,23 @@ export default function BorrowCard({ protocolAddress }: Props) {
                     className="w-full px-4 py-2 rounded-lg bg-black/40 border border-white/10 text-white"
                 />
 
+                {borrowAmount && (
+                    <div className="text-sm mt-2">
+                        <p className="text-gray-400">Health After Borrow</p>
+                        <p
+                            className={`font-medium ${simulatedHealthFactor > 1.5
+                                    ? "text-green-400"
+                                    : simulatedHealthFactor > 1
+                                        ? "text-yellow-400"
+                                        : "text-red-500"
+                                }`}
+                        >
+                            {simulatedHealthFactor.toFixed(2)}
+                        </p>
+                    </div>
+                )}
+
+
                 {borrowTooHigh && (
                     <p className="text-red-400 text-sm">
                         Amount exceeds max borrow limit
@@ -199,12 +246,13 @@ export default function BorrowCard({ protocolAddress }: Props) {
                 )}
 
                 <button
-                    disabled={borrowTooHigh}
+                    disabled={borrowDisabled}
                     onClick={handleBorrow}
                     className="w-full bg-green-500 disabled:bg-gray-600 hover:opacity-90 rounded-lg py-2 text-white"
                 >
                     Borrow
                 </button>
+
             </div>
 
             {/* Repay */}
@@ -223,6 +271,7 @@ export default function BorrowCard({ protocolAddress }: Props) {
                     Repay
                 </button>
             </div>
+
 
         </div>
     );
